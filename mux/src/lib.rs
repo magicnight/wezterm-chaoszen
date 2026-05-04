@@ -1533,4 +1533,22 @@ mod tests {
             "{}", "expected 'already' in error, got: {err}"
         );
     }
+
+    #[test]
+    fn render_cache_upsert_get_round_trip() {
+        let mux = Mux::new(None);
+        let mut cache = mux.render_cache.write();
+        let state = crate::render_cache::PaneRenderState {
+            title: "hello".to_string(),
+            seqno: 42,
+            ..Default::default()
+        };
+        cache.upsert(7, state);
+        drop(cache);
+
+        let cache = mux.render_cache.read();
+        let got = cache.get(7).expect("upserted");
+        assert_eq!(got.title, "hello");
+        assert_eq!(got.seqno, 42);
+    }
 }
