@@ -144,3 +144,28 @@ impl Pane for ZellijPane {
         None // 1b.3.b
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zellij_pane_skeleton_constructs_with_pane_id() {
+        let pane = ZellijPane::new(42, 1);
+        assert_eq!(pane.pane_id(), 42);
+        assert_eq!(pane.domain_id(), 1);
+    }
+
+    #[test]
+    fn zellij_pane_send_paste_returns_unimplemented_in_1b3a() {
+        let pane = ZellijPane::new(1, 1);
+        let err = match pane.send_paste("ls\n") {
+            Ok(_) => panic!("expected Err"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("1b.3.c"),
+            "expected '1b.3.c' in error, got: {err}"
+        );
+    }
+}
