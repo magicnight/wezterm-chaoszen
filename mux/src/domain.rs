@@ -253,3 +253,35 @@ impl Domain for LocalDomain {
         *self.state.read()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_domain_spawn_pane_returns_unimplemented_error() {
+        let domain = LocalDomain::new("test").expect("LocalDomain::new");
+        let result = smol::block_on(domain.spawn_pane(
+            TerminalSize::default(),
+            None,
+            None,
+        ));
+        let err = match result {
+            Ok(_) => panic!("expected Err, got Ok"),
+            Err(e) => e,
+        };
+        let s = err.to_string();
+        assert!(
+            s.contains("1b.3"),
+            "expected '1b.3' in error message, got: {s}"
+        );
+    }
+
+    #[test]
+    fn local_domain_basic_getters() {
+        let domain = LocalDomain::new("hello").unwrap();
+        assert_eq!(domain.domain_name(), "hello");
+        assert!(!domain.detachable());
+        assert!(matches!(domain.state(), DomainState::Detached));
+    }
+}
