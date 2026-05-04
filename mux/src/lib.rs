@@ -1513,7 +1513,7 @@ mod tests {
         let err = mux.set_zellij_backend(handle2, outbound2).unwrap_err();
         assert!(
             err.to_string().contains("already"),
-            "expected 'already' in error, got: {err}"
+            "{}", "expected 'already' in error, got: {err}"
         );
     }
 }
