@@ -42,6 +42,7 @@ pub mod renderable;
 pub mod tab;
 pub mod termwiztermtab;
 pub mod window;
+pub mod zellij_backend;
 
 use crate::activity::Activity;
 
@@ -106,6 +107,7 @@ pub struct Mux {
     identity: RwLock<Option<Arc<ClientId>>>,
     num_panes_by_workspace: RwLock<HashMap<String, usize>>,
     main_thread_id: std::thread::ThreadId,
+    zellij_backend: RwLock<Option<crate::zellij_backend::ZellijBackend>>,
 }
 
 const BUFSIZE: usize = 1024 * 1024;
@@ -434,6 +436,7 @@ impl Mux {
             identity: RwLock::new(None),
             num_panes_by_workspace: RwLock::new(HashMap::new()),
             main_thread_id: std::thread::current().id(),
+            zellij_backend: RwLock::new(None),
         }
     }
 
