@@ -13,6 +13,14 @@ lazy_static::lazy_static! {
                                 .unwrap().as_secs();
 }
 
+fn chrono_now() -> DateTime<Utc> {
+    let secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    DateTime::<Utc>::from_timestamp(secs, 0).unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap())
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ClientId {
     pub hostname: String,
@@ -20,7 +28,6 @@ pub struct ClientId {
     pub pid: u32,
     pub epoch: u64,
     pub id: usize,
-    pub ssh_auth_sock: Option<String>,
 }
 
 impl ClientId {
@@ -34,7 +41,6 @@ impl ClientId {
             pid: unsafe { libc::getpid() as u32 },
             epoch: *EPOCH,
             id,
-            ssh_auth_sock: crate::AgentProxy::default_ssh_auth_sock(),
         }
     }
 }
@@ -58,15 +64,15 @@ impl ClientInfo {
     pub fn new(client_id: Arc<ClientId>) -> Self {
         Self {
             client_id,
-            connected_at: Utc::now(),
+            connected_at: chrono_now(),
             active_workspace: None,
-            last_input: Utc::now(),
+            last_input: chrono_now(),
             focused_pane_id: None,
         }
     }
 
     pub fn update_last_input(&mut self) {
-        self.last_input = Utc::now();
+        self.last_input = chrono_now();
     }
 
     pub fn update_focused_pane(&mut self, pane_id: PaneId) {
