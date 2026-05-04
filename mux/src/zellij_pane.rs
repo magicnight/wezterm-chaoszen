@@ -1,0 +1,146 @@
+//! Zellij-backed `Pane` implementation. Slice 1b.3.a is the SKELETON:
+//! all trait methods present (compile-link works) but bodies are stubs:
+//!   - read methods return defaults / placeholder values
+//!   - input methods bail with "see Slice 1b.3.c"
+//!
+//! Slice 1b.3.b fills read methods from `RenderCache`.
+//! Slice 1b.3.c fills input methods (forward to zellij-server via
+//! ServerHandle) and wires spawn_pane.
+
+use std::ops::Range;
+
+use parking_lot::MappedMutexGuard;
+use rangeset::RangeSet;
+use termwiz::surface::{Line, SequenceNo};
+use wezterm_term::color::ColorPalette;
+use wezterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, TerminalSize};
+
+use crate::domain::DomainId;
+use crate::pane::{
+    CachePolicy, ForEachPaneLogicalLine, LogicalLine, Pane, PaneId, WithPaneLines,
+};
+use crate::renderable::{RenderableDimensions, StableCursorPosition};
+
+pub struct ZellijPane {
+    pane_id: PaneId,
+    domain_id: DomainId,
+}
+
+impl ZellijPane {
+    pub fn new(pane_id: PaneId, domain_id: DomainId) -> Self {
+        Self { pane_id, domain_id }
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl Pane for ZellijPane {
+    fn pane_id(&self) -> PaneId {
+        self.pane_id
+    }
+
+    fn domain_id(&self) -> DomainId {
+        self.domain_id
+    }
+
+    fn get_cursor_position(&self) -> StableCursorPosition {
+        StableCursorPosition::default() // 1b.3.b: read from cache
+    }
+
+    fn get_current_seqno(&self) -> SequenceNo {
+        0 // 1b.3.b: read from cache
+    }
+
+    fn get_changed_since(
+        &self,
+        _lines: Range<StableRowIndex>,
+        _seqno: SequenceNo,
+    ) -> RangeSet<StableRowIndex> {
+        RangeSet::default() // 1b.3.b: compare cache seqno
+    }
+
+    fn get_lines(&self, _lines: Range<StableRowIndex>) -> (StableRowIndex, Vec<Line>) {
+        (0, vec![]) // 1b.3.b: read from cache.lines
+    }
+
+    fn with_lines_mut(&self, _lines: Range<StableRowIndex>, _with_lines: &mut dyn WithPaneLines) {
+        // 1b.3.b: delegate to get_lines via impl_with_lines_via_get_lines
+    }
+
+    fn for_each_logical_line_in_stable_range_mut(
+        &self,
+        _lines: Range<StableRowIndex>,
+        _for_line: &mut dyn ForEachPaneLogicalLine,
+    ) {
+        // 1b.3.b: iterate logical lines from cache
+    }
+
+    fn get_logical_lines(&self, _lines: Range<StableRowIndex>) -> Vec<LogicalLine> {
+        vec![] // 1b.3.b: read from cache
+    }
+
+    fn get_dimensions(&self) -> RenderableDimensions {
+        RenderableDimensions::default() // 1b.3.b
+    }
+
+    fn get_title(&self) -> String {
+        format!("zellij pane {}", self.pane_id) // 1b.3.b: read cache.title
+    }
+
+    fn is_dead(&self) -> bool {
+        false // 1b.3.b: read cache.is_dead
+    }
+
+    fn send_paste(&self, _text: &str) -> anyhow::Result<()> {
+        anyhow::bail!(
+            "ZellijPane::send_paste not implemented in Slice 1b.3.a; see 1b.3.c"
+        )
+    }
+
+    fn reader(&self) -> anyhow::Result<Option<Box<dyn std::io::Read + Send>>> {
+        Ok(None) // 1b.3.c: wire to server output stream
+    }
+
+    fn writer(&self) -> MappedMutexGuard<'_, dyn std::io::Write> {
+        panic!("ZellijPane::writer not implemented in Slice 1b.3.a; see 1b.3.c")
+    }
+
+    fn resize(&self, _size: TerminalSize) -> anyhow::Result<()> {
+        anyhow::bail!(
+            "ZellijPane::resize not implemented in Slice 1b.3.a; see 1b.3.c"
+        )
+    }
+
+    fn key_down(&self, _key: KeyCode, _mods: KeyModifiers) -> anyhow::Result<()> {
+        anyhow::bail!(
+            "ZellijPane::key_down not implemented in Slice 1b.3.a; see 1b.3.c"
+        )
+    }
+
+    fn key_up(&self, _key: KeyCode, _mods: KeyModifiers) -> anyhow::Result<()> {
+        anyhow::bail!(
+            "ZellijPane::key_up not implemented in Slice 1b.3.a; see 1b.3.c"
+        )
+    }
+
+    fn mouse_event(&self, _event: MouseEvent) -> anyhow::Result<()> {
+        anyhow::bail!(
+            "ZellijPane::mouse_event not implemented in Slice 1b.3.a; see 1b.3.c"
+        )
+    }
+
+    fn palette(&self) -> ColorPalette {
+        ColorPalette::default()
+    }
+
+    fn is_mouse_grabbed(&self) -> bool {
+        false // 1b.3.b
+    }
+
+    fn is_alt_screen_active(&self) -> bool {
+        false // 1b.3.b
+    }
+
+    fn get_current_working_dir(&self, _policy: CachePolicy) -> Option<url::Url> {
+        None // 1b.3.b
+    }
+}

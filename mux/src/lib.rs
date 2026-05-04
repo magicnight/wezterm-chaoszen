@@ -44,6 +44,7 @@ pub mod tab;
 pub mod termwiztermtab;
 pub mod window;
 pub mod zellij_backend;
+pub mod zellij_pane;
 
 use crate::activity::Activity;
 
@@ -489,7 +490,7 @@ impl Mux {
                 // through Pane::get_lines.
                 log::trace!(target: "mux::zellij", "render arm reached");
                 if let Some(mux) = Mux::try_get() {
-                    let mut cache = mux.render_cache.write();
+                    let cache = mux.render_cache.write();
                     // TODO(1b.3.b): parse payload → PaneRenderState fields
                     let _ = cache;
                 }
