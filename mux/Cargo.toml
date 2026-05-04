@@ -47,6 +47,8 @@ thiserror.workspace = true
 url.workspace = true
 wezterm-dynamic.workspace = true
 wezterm-term = { workspace=true, features=["use_serde"] }
+zellij-server = { path = "../../zellij/zellij-server" }
+zellij-utils = { path = "../../zellij/zellij-utils" }
 
 [target."cfg(windows)".dependencies]
 ntapi.workspace = true
