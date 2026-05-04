@@ -38,6 +38,7 @@ pub mod connui;
 pub mod domain;
 pub mod localpane;
 pub mod pane;
+pub mod render_cache;
 pub mod renderable;
 pub mod tab;
 pub mod termwiztermtab;
@@ -108,6 +109,7 @@ pub struct Mux {
     num_panes_by_workspace: RwLock<HashMap<String, usize>>,
     main_thread_id: std::thread::ThreadId,
     zellij_backend: RwLock<Option<crate::zellij_backend::ZellijBackend>>,
+    render_cache: RwLock<crate::render_cache::RenderCache>,
 }
 
 const BUFSIZE: usize = 1024 * 1024;
@@ -437,6 +439,7 @@ impl Mux {
             num_panes_by_workspace: RwLock::new(HashMap::new()),
             main_thread_id: std::thread::current().id(),
             zellij_backend: RwLock::new(None),
+            render_cache: RwLock::new(crate::render_cache::RenderCache::new()),
         }
     }
 
