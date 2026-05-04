@@ -214,14 +214,11 @@ impl Pane for LocalPane {
     }
 
     fn exit_behavior(&self) -> Option<ExitBehavior> {
-        let pty = self.pty.lock();
-        let is_failed_spawn = pty.is::<crate::domain::FailedSpawnPty>();
-
-        if is_failed_spawn {
-            Some(ExitBehavior::CloseOnCleanExit)
-        } else {
-            None
-        }
+        // Slice 1b.2: FailedSpawnPty was removed alongside LocalDomain's
+        // portable-pty backed spawn_pane. Without that dummy type, no PTY
+        // matches the "force CloseOnCleanExit" condition, so always return
+        // None and let the config default decide.
+        None
     }
 
     fn kill(&self) {
