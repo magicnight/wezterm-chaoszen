@@ -440,6 +440,48 @@ impl Mux {
         }
     }
 
+    /// Install the zellij-server::embedded backend. Spawns the outbound
+    /// drain thread that reads `ServerToClientMsg`s and feeds them into
+    /// Mux state (in 1b.2 shallow: just logs; 1b.3 will sync tabs/panes).
+    ///
+    /// Idempotency: this method may be called at most once per Mux
+    /// instance. Second call returns `Err`.
+    ///
+    /// Ordering: chaoszen-app is expected to call this after the embedded
+    /// zellij-server has been started on a worker thread, but before any
+    /// `Domain::spawn_pane` call from wezterm-gui's main loop.
+    pub fn set_zellij_backend(
+        &self,
+        handle: zellij_server::embedded::ServerHandle,
+        outbound: zellij_utils::channels::Receiver<(
+            zellij_utils::ipc::ServerToClientMsg,
+            zellij_utils::errors::ErrorContext,
+        )>,
+    ) -> anyhow::Result<()> {
+        let mut slot = self.zellij_backend.write();
+        anyhow::ensure!(slot.is_none(), "Mux::set_zellij_backend already called");
+        let drain_join = std::thread::Builder::new()
+            .name("mux-outbound-drain".to_string())
+            .spawn(move || {
+                while let Ok((msg, _ctx)) = outbound.recv() {
+                    Self::on_zellij_outbound(msg);
+                }
+                log::debug!(target: "mux::zellij",
+                    "outbound drain thread: channel disconnected, exiting");
+            })?;
+        *slot = Some(crate::zellij_backend::ZellijBackend { handle, drain_join });
+        Ok(())
+    }
+
+    /// Process a single outbound message from zellij-server.
+    ///
+    /// Slice 1b.2 shallow: only log the discriminant. Slice 1b.3 will
+    /// populate Mux::tabs / panes / windows here.
+    fn on_zellij_outbound(msg: zellij_utils::ipc::ServerToClientMsg) {
+        log::trace!(target: "mux::zellij",
+            "outbound msg discriminant: {:?}", std::mem::discriminant(&msg));
+    }
+
     fn get_default_workspace(&self) -> String {
         let config = configuration();
         config
