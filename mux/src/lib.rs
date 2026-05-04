@@ -481,8 +481,22 @@ impl Mux {
     /// Slice 1b.2 shallow: only log the discriminant. Slice 1b.3 will
     /// populate Mux::tabs / panes / windows here.
     fn on_zellij_outbound(msg: zellij_utils::ipc::ServerToClientMsg) {
-        log::trace!(target: "mux::zellij",
-            "outbound msg discriminant: {:?}", std::mem::discriminant(&msg));
+        use zellij_utils::ipc::ServerToClientMsg;
+        match msg {
+            ServerToClientMsg::Render { .. } => {
+                // Slice 1b.3.a: skeleton only — populate cache once Render
+                // payload structure is mapped. 1b.3.b will surface the data
+                // through Pane::get_lines.
+                log::trace!(target: "mux::zellij", "render arm reached");
+                if let Some(mux) = Mux::try_get() {
+                    let mut cache = mux.render_cache.write();
+                    // TODO(1b.3.b): parse payload → PaneRenderState fields
+                    let _ = cache;
+                }
+            }
+            other => log::trace!(target: "mux::zellij",
+                "outbound msg discriminant: {:?}", std::mem::discriminant(&other)),
+        }
     }
 
     fn get_default_workspace(&self) -> String {
