@@ -1,9 +1,10 @@
 //! A Domain represents an instance of a multiplexer.
-//! For example, the gui frontend has its own domain,
-//! and we can connect to a domain hosted by a mux server
-//! that may be local, running "remotely" inside a WSL
-//! container or actually remote, running on the other end
-//! of an ssh session somewhere.
+//!
+//! In the chaoszen fork the only relevant domain is the local one
+//! (eventually backed by zellij-server in Slice 1b.2). Upstream
+//! WezTerm also supports remote ssh and wezterm-mux-server domains;
+//! those have been removed (Slice 1b.1) along with the underlying
+//! ssh / tmux multiplexer code.
 
 use crate::localpane::LocalPane;
 use crate::pane::{alloc_pane_id, Pane, PaneId};
