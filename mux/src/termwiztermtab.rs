@@ -544,7 +544,7 @@ pub async fn run<
             TermWizTerminalPane::new(domain.domain_id(), size, input_tx, render_rx, term_config);
         let pane: Arc<dyn Pane> = Arc::new(pane);
 
-        let tab = Arc::new(Tab::new(&size));
+        let tab = Arc::new(Tab::new_orphan());
         tab.assign_pane(&pane);
 
         mux.add_tab_and_active_pane(&tab)?;

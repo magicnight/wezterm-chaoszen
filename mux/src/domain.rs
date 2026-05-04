@@ -54,7 +54,7 @@ pub trait Domain: Downcast + Send + Sync {
             .await
             .context("spawn")?;
 
-        let tab = Arc::new(Tab::new(&size));
+        let tab = Arc::new(Tab::new_orphan());
         tab.assign_pane(&pane);
 
         let mux = Mux::get();
@@ -91,12 +91,22 @@ pub trait Domain: Downcast + Send + Sync {
             None => anyhow::bail!("invalid pane index {}", pane_index),
         };
 
+        // 1b.3.c stub: convert PaneSize → TerminalSize for spawn_pane signature.
+        // Real geometry computation happens in 1b.3.c when zellij drives layout.
+        let second_size = TerminalSize {
+            rows: split_size.second.rows,
+            cols: split_size.second.cols,
+            pixel_width: split_size.second.pixel_width,
+            pixel_height: split_size.second.pixel_height,
+            dpi: 0,
+        };
+
         let pane = match source {
             SplitSource::Spawn {
                 command,
                 command_dir,
             } => {
-                self.spawn_pane(split_size.second, command, command_dir)
+                self.spawn_pane(second_size, command, command_dir)
                     .await?
             }
             SplitSource::MovePane(src_pane_id) => {

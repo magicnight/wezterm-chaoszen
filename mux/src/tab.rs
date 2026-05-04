@@ -14,7 +14,9 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use wezterm_term::TerminalSize;
 
+use crate::domain::DomainId;
 use crate::pane::{CloseReason, Pane, PaneId};
 
 pub type TabId = usize;
@@ -138,6 +140,31 @@ impl Tab {
             "Tab::split_and_insert not implemented in Slice 1b.3.a; see 1b.3.c"
         )
     }
+
+    /// Return the size of the terminal associated with this tab.
+    /// 1b.3.a stub: returns default. 1b.3.c: query zellij geometry cache.
+    pub fn get_size(&self) -> TerminalSize {
+        // 1b.3.c stub
+        TerminalSize::default()
+    }
+
+    /// Remove a pane from this tab's local pane list and return it.
+    /// 1b.3.a stub: always returns None. 1b.3.c: real implementation.
+    pub fn remove_pane(&self, pane_id: PaneId) -> Option<Arc<dyn Pane>> {
+        // 1b.3.c stub
+        let mut panes = self.panes.write();
+        if let Some(pos) = panes.iter().position(|p| p.pane_id() == pane_id) {
+            Some(panes.remove(pos))
+        } else {
+            None
+        }
+    }
+
+    /// Mark all panes belonging to the given domain as dead.
+    /// 1b.3.a stub: no-op. 1b.3.c: propagate to zellij.
+    pub fn kill_panes_in_domain(&self, _domain: DomainId) {
+        // 1b.3.c stub
+    }
 }
 
 // ====================================================================
@@ -186,7 +213,7 @@ pub struct PaneSize {
     pub pixel_height: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PositionedPane {
     pub index: usize,
     pub pane: Arc<dyn Pane>,
@@ -198,6 +225,23 @@ pub struct PositionedPane {
     pub pixel_height: usize,
     pub is_active: bool,
     pub is_zoomed: bool,
+}
+
+impl std::fmt::Debug for PositionedPane {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PositionedPane")
+            .field("index", &self.index)
+            .field("pane_id", &self.pane.pane_id())
+            .field("left", &self.left)
+            .field("top", &self.top)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("pixel_width", &self.pixel_width)
+            .field("pixel_height", &self.pixel_height)
+            .field("is_active", &self.is_active)
+            .field("is_zoomed", &self.is_zoomed)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]

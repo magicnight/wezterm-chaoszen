@@ -518,13 +518,7 @@ impl Mux {
         for window in self.windows.read().values() {
             let workspace = window.get_workspace();
             for tab in window.iter() {
-                *count.entry(workspace.to_string()).or_insert(0) += match tab.count_panes() {
-                    Some(n) => n,
-                    None => {
-                        // Busy: abort this and we'll retry later
-                        return;
-                    }
-                };
+                *count.entry(workspace.to_string()).or_insert(0) += tab.count_panes();
             }
         }
         *self.num_panes_by_workspace.write() = count;
@@ -1337,7 +1331,7 @@ impl Mux {
             .remove_pane(pane_id)
             .ok_or_else(|| anyhow::anyhow!("pane {} wasn't in its containing tab!?", pane_id))?;
 
-        let tab = Arc::new(Tab::new(&size));
+        let tab = Arc::new(Tab::new_orphan());
         tab.assign_pane(&pane);
         pane.resize(size)?;
         self.add_tab_and_active_pane(&tab)?;
