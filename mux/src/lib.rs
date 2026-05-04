@@ -1492,3 +1492,28 @@ impl wezterm_term::DownloadHandler for MuxDownloader {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mux_set_zellij_backend_only_allowed_once() {
+        let mux = Mux::new(None);
+
+        let mut server1 = zellij_server::embedded::Server::new();
+        let outbound1 = server1.take_outbound().expect("first take");
+        let handle1 = server1.handle();
+        mux.set_zellij_backend(handle1, outbound1)
+            .expect("first call ok");
+
+        let mut server2 = zellij_server::embedded::Server::new();
+        let outbound2 = server2.take_outbound().expect("second take");
+        let handle2 = server2.handle();
+        let err = mux.set_zellij_backend(handle2, outbound2).unwrap_err();
+        assert!(
+            err.to_string().contains("already"),
+            "expected 'already' in error, got: {err}"
+        );
+    }
+}
