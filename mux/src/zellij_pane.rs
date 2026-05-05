@@ -165,7 +165,8 @@ mod tests {
         };
         assert!(
             err.to_string().contains("1b.3.c"),
-            "expected '1b.3.c' in error, got: {err}"
+            "expected '1b.3.c' in error, got: {}",
+            err
         );
     }
 }

@@ -251,3 +251,14 @@ pub struct PositionedSplit {
     pub top: usize,
     pub size: usize,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tab_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Tab>();
+    }
+}
