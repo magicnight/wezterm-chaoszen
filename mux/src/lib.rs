@@ -487,9 +487,6 @@ impl Mux {
         match msg {
             ServerToClientMsg::Render { content } => {
                 if let Some(mux) = Mux::try_get() {
-                    // Slice 1b.3.b single-pane routing: find first ZellijPane
-                    // in panes registry and forward the ANSI stream.
-                    // Multi-zellij-pane routing is 1b.5+.
                     let panes = mux.panes.read();
                     for pane in panes.values() {
                         if let Some(zp) = pane
@@ -497,6 +494,20 @@ impl Mux {
                         {
                             zp.advance_bytes(content.as_bytes());
                             break;
+                        }
+                    }
+                }
+            }
+            ServerToClientMsg::Exit { exit_reason } => {
+                log::info!(target: "mux::zellij",
+                    "zellij session exited: {:?}", exit_reason);
+                if let Some(mux) = Mux::try_get() {
+                    let panes = mux.panes.read();
+                    for pane in panes.values() {
+                        if let Some(zp) = pane
+                            .downcast_ref::<crate::zellij_pane::ZellijPane>()
+                        {
+                            zp.mark_dead();
                         }
                     }
                 }
@@ -1603,6 +1614,50 @@ mod tests {
         );
 
         // Clean up the global singleton to avoid leaking into other tests.
+        Mux::shutdown();
+    }
+
+    #[test]
+    fn on_zellij_outbound_exit_marks_zellij_panes_dead() {
+        use crate::pane::Pane;
+        use crate::zellij_pane::ZellijPane;
+        use zellij_server::embedded::{EmbeddedInputSender, SocketpairChannel};
+        use zellij_utils::ipc::{
+            ClientToServerMsg, ExitReason, IpcSenderWithContext, ServerToClientMsg,
+        };
+
+        let mux = Arc::new(Mux::new(None));
+        Mux::set_mux(&mux);
+
+        // Build a ZellijPane and register it in the Mux's panes registry
+        // (without going through register_zellij_session_started so we
+        // exercise on_zellij_outbound in isolation).
+        let (host, _server) = SocketpairChannel::new().unwrap();
+        let host_stream = host.into_local_socket_stream().unwrap();
+        let sender = EmbeddedInputSender::new_for_test(
+            IpcSenderWithContext::<ClientToServerMsg>::new(host_stream),
+        );
+        let pane: Arc<dyn Pane> = Arc::new(ZellijPane::new(
+            42,
+            1,
+            /* zellij_pane_id */ 1,
+            /* client_id */ 1,
+            wezterm_term::TerminalSize {
+                rows: 24,
+                cols: 80,
+                ..Default::default()
+            },
+            sender,
+        ));
+        mux.add_pane(&pane).unwrap();
+
+        // Drive on_zellij_outbound directly with an Exit message.
+        Mux::on_zellij_outbound(ServerToClientMsg::Exit {
+            exit_reason: ExitReason::Normal,
+        });
+
+        assert!(pane.is_dead(), "ZellijPane should be marked dead after Exit");
+
         Mux::shutdown();
     }
 }
