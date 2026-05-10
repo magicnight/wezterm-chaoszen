@@ -41,10 +41,15 @@ pub struct Tab {
 
 impl Tab {
     /// Construct a new Tab bound to the given zellij tab id.
-    pub fn new(zellij_tab_id: u32) -> Self {
+    ///
+    /// Accepts either a `u32` (chaoszen callers from `mux::lib`) or a
+    /// `&TerminalSize` (legacy `wezterm-client` callers, which had a
+    /// pre-1b.3.a `Tab::new(&size)` API). The legacy path binds to
+    /// zellij_tab_id=0; a future cleanup slice removes it.
+    pub fn new<T: TabConstructorArg>(arg: T) -> Self {
         Self {
             tab_id: alloc_tab_id(),
-            zellij_tab_id,
+            zellij_tab_id: arg.into_zellij_tab_id(),
             panes: RwLock::new(Vec::new()),
             title: RwLock::new(String::new()),
             active_pane_id: RwLock::new(None),
@@ -250,6 +255,142 @@ pub struct PositionedSplit {
     pub left: usize,
     pub top: usize,
     pub size: usize,
+}
+
+// =============================================================================
+// 1b.3.a stub re-additions
+// =============================================================================
+//
+// These types and Tab methods were part of pre-1b.3.a wezterm but no longer
+// have a meaningful semantics in the chaoszen architecture (zellij-server
+// owns the pane tree). They're re-added as stubs to keep `codec`,
+// `lua-api-crates/mux`, and `wezterm-client` compiling. A future cleanup
+// slice will delete them along with their callers.
+
+/// Pre-1b.3.a tree-pane representation. chaoszen no longer owns the pane
+/// tree (zellij-server does), so this is a placeholder for IPC type
+/// compatibility only.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PaneNode {
+    /// Tab id this pane belongs to (or 0 for the synthetic root).
+    pub tab_id: TabId,
+}
+
+impl PaneNode {
+    /// Pre-1b.3.a method: returned the root TerminalSize of this subtree.
+    /// chaoszen IPC doesn't carry pane-tree geometry through PaneNode;
+    /// always None.
+    pub fn root_size(&self) -> Option<wezterm_term::TerminalSize> {
+        None
+    }
+
+    /// Pre-1b.3.a method: returned the (window_id, tab_id) for the
+    /// first leaf in this subtree. chaoszen IPC doesn't carry these;
+    /// always None.
+    pub fn window_and_tab_ids(&self) -> Option<(crate::window::WindowId, TabId)> {
+        None
+    }
+}
+
+/// Pre-1b.3.a serialization wrapper around `url::Url`. chaoszen IPC paths
+/// don't carry working-dir URLs through this type anymore. Kept as
+/// stub for codec compatibility.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SerdeUrl(pub String);
+
+impl std::fmt::Display for SerdeUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<SerdeUrl> for url::Url {
+    /// Pre-1b.3.a IPC carried URLs as SerdeUrl. chaoszen doesn't use this
+    /// path; the conversion best-effort parses or falls back to about:blank.
+    fn from(s: SerdeUrl) -> Self {
+        url::Url::parse(&s.0).unwrap_or_else(|_| {
+            url::Url::parse("about:blank").expect("about:blank parses")
+        })
+    }
+}
+
+/// Sealed marker trait for `Tab::new` arguments. Pre-1b.3.a callers in
+/// `wezterm-client` pass `&TerminalSize`; chaoszen callers in `mux::lib`
+/// pass `u32` (the zellij-side tab id). Both compile via this shim until
+/// a cleanup slice removes the legacy callers.
+pub trait TabConstructorArg {
+    fn into_zellij_tab_id(self) -> u32;
+}
+
+impl TabConstructorArg for u32 {
+    fn into_zellij_tab_id(self) -> u32 {
+        self
+    }
+}
+
+impl TabConstructorArg for &wezterm_term::TerminalSize {
+    fn into_zellij_tab_id(self) -> u32 {
+        // Pre-1b.3.a: TerminalSize was the tab's pty size. chaoszen doesn't
+        // map size -> zellij tab id; a future cleanup slice deletes the
+        // wezterm-client caller. For now, bind to 0 (orphan).
+        0
+    }
+}
+
+impl Tab {
+    /// Pre-1b.3.a method: returned the pane index reachable in the given
+    /// direction from the active pane. chaoszen delegates pane geometry
+    /// to zellij-server; always None.
+    pub fn get_pane_direction(
+        &self,
+        _direction: config::keyassignment::PaneDirection,
+        _wrap: bool,
+    ) -> Option<usize> {
+        None
+    }
+
+    /// Pre-1b.3.a method: toggled the zoom state of a pane. chaoszen does
+    /// not implement pane zoom; always returns false (was-zoomed=false).
+    pub fn set_zoomed(&self, _zoomed: bool) -> bool {
+        false
+    }
+
+    /// Pre-1b.3.a method: rotated panes counter-clockwise within the tab.
+    /// chaoszen delegates to zellij; this is a no-op.
+    pub fn rotate_counter_clockwise(&self) {}
+
+    /// Pre-1b.3.a method: zoom-honoring pane iteration. chaoszen has no
+    /// zoom state; delegates to `iter_panes_ignoring_zoom`.
+    pub fn iter_panes(&self) -> Vec<PositionedPane> {
+        self.iter_panes_ignoring_zoom()
+    }
+
+    /// Pre-1b.3.a method: synchronized this tab's pane tree to a remote
+    /// PaneNode. chaoszen does not run the wezterm-mux-server protocol;
+    /// always a no-op.
+    pub fn sync_with_pane_tree<F>(
+        &self,
+        _size: wezterm_term::TerminalSize,
+        _root: PaneNode,
+        _make_pane: F,
+    ) where
+        F: FnMut(PaneEntry) -> Arc<dyn Pane>,
+    {
+    }
+}
+
+/// Pre-1b.3.a per-pane snapshot used in IPC sync. chaoszen IPC doesn't
+/// carry these; kept as a stub struct so closures supplied to
+/// `Tab::sync_with_pane_tree` continue to type-check.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PaneEntry {
+    pub window_id: crate::window::WindowId,
+    pub tab_id: TabId,
+    pub pane_id: crate::pane::PaneId,
+    pub title: String,
+    pub size: wezterm_term::TerminalSize,
+    pub working_dir: Option<SerdeUrl>,
+    pub workspace: String,
 }
 
 #[cfg(test)]
