@@ -8,4 +8,5 @@
 //! All other modules remain `pub(crate)` and are not exposed
 //! externally.
 
-// Re-exports added in Task 4 once run_with_mux module exists.
+pub mod run_with_mux;
+pub use run_with_mux::RunWithMuxOpts;
