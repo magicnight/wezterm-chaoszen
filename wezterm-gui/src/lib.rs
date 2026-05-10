@@ -869,7 +869,7 @@ pub(crate) fn run_show_keys(config: config::ConfigHandle, cmd: &ShowKeysCommand)
     Ok(())
 }
 
-pub fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyhow::Result<()> {
+pub(crate) fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyhow::Result<()> {
     use wezterm_font::parser::ParsedFont;
 
     if let Err(err) = config::configuration_result() {
