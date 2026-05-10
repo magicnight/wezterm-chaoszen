@@ -455,16 +455,59 @@ impl Mux {
     /// Ordering: chaoszen-app is expected to call this after the embedded
     /// zellij-server has been started on a worker thread, but before any
     /// `Domain::spawn_pane` call from wezterm-gui's main loop.
+    /// Bind a freshly-created embedded zellij server to this Mux.
+    ///
+    /// Performs three actions atomically (under the backend slot's write
+    /// lock):
+    /// 1. Constructs the initial `ZellijPane` (bound to
+    ///    `zellij_initial_pane_id`, typically 1) and registers it in the
+    ///    panes registry — so the drain thread (started in step 3) can
+    ///    immediately route Render content to it.
+    /// 2. Constructs a `Tab` holding that pane and adds it to the windows
+    ///    registry.
+    /// 3. Spawns the outbound drain thread and stores the
+    ///    `ZellijBackend` snapshot.
+    ///
+    /// Idempotency: this method may be called at most once per Mux
+    /// instance. Second call returns `Err`.
+    ///
+    /// Returns the constructed Tab so chaoszen-app (1b.4) can attach
+    /// it to a window.
     pub fn set_zellij_backend(
         &self,
         handle: zellij_server::embedded::ServerHandle,
+        input_sender: zellij_server::embedded::EmbeddedInputSender,
         outbound: zellij_utils::channels::Receiver<(
             zellij_utils::ipc::ServerToClientMsg,
             zellij_utils::errors::ErrorContext,
         )>,
-    ) -> anyhow::Result<()> {
+        zellij_initial_pane_id: u32,
+        client_id: u16,
+        size: wezterm_term::TerminalSize,
+    ) -> anyhow::Result<std::sync::Arc<crate::tab::Tab>> {
         let mut slot = self.zellij_backend.write();
         anyhow::ensure!(slot.is_none(), "Mux::set_zellij_backend already called");
+
+        // 1) Construct the initial pane, register in panes registry.
+        let pane_id = crate::pane::alloc_pane_id();
+        let pane = std::sync::Arc::new(crate::zellij_pane::ZellijPane::new(
+            pane_id,
+            /* domain_id = */ 0,
+            zellij_initial_pane_id,
+            client_id,
+            size,
+            input_sender.clone(),
+        )) as std::sync::Arc<dyn crate::pane::Pane>;
+        // Insert directly into self.panes (we cannot call self.add_pane
+        // here without re-locking pieces we already hold via
+        // self.zellij_backend.write()).
+        self.panes.write().insert(pane_id, std::sync::Arc::clone(&pane));
+
+        // 2) Construct Tab.
+        let tab = std::sync::Arc::new(crate::tab::Tab::new(zellij_initial_pane_id));
+        tab.assign_pane(&pane);
+
+        // 3) Spawn drain thread.
         let drain_join = std::thread::Builder::new()
             .name("mux-outbound-drain".to_string())
             .spawn(move || {
@@ -474,8 +517,15 @@ impl Mux {
                 log::debug!(target: "mux::zellij",
                     "outbound drain thread: channel disconnected, exiting");
             })?;
-        *slot = Some(crate::zellij_backend::ZellijBackend { handle, drain_join });
-        Ok(())
+
+        // 4) Stash backend snapshot.
+        *slot = Some(crate::zellij_backend::ZellijBackend {
+            handle,
+            input_sender,
+            drain_join,
+        });
+
+        Ok(tab)
     }
 
     /// Process a single outbound message from zellij-server.
@@ -1528,22 +1578,93 @@ mod tests {
 
     #[test]
     fn mux_set_zellij_backend_only_allowed_once() {
-        let mux = Mux::new(None);
+        use zellij_server::embedded::Server;
 
-        let mut server1 = zellij_server::embedded::Server::new();
-        let outbound1 = server1.take_outbound().expect("first take");
+        let mux = std::sync::Arc::new(Mux::new(None));
+        Mux::set_mux(&mux);
+
+        let mut server1 = Server::new();
         let handle1 = server1.handle();
-        mux.set_zellij_backend(handle1, outbound1)
-            .expect("first call ok");
+        let outbound1 = server1.take_outbound().unwrap();
+        let input1 = server1.take_input_sender().unwrap();
+        mux.set_zellij_backend(
+            handle1,
+            input1,
+            outbound1,
+            /* zellij_initial_pane_id */ 1,
+            /* client_id */ 1,
+            wezterm_term::TerminalSize {
+                rows: 24,
+                cols: 80,
+                ..Default::default()
+            },
+        )
+        .expect("first call should succeed");
 
-        let mut server2 = zellij_server::embedded::Server::new();
-        let outbound2 = server2.take_outbound().expect("second take");
+        let mut server2 = Server::new();
         let handle2 = server2.handle();
-        let err = mux.set_zellij_backend(handle2, outbound2).unwrap_err();
+        let outbound2 = server2.take_outbound().unwrap();
+        let input2 = server2.take_input_sender().unwrap();
+        let err = match mux.set_zellij_backend(
+            handle2,
+            input2,
+            outbound2,
+            1,
+            1,
+            wezterm_term::TerminalSize {
+                rows: 24,
+                cols: 80,
+                ..Default::default()
+            },
+        ) {
+            Ok(_) => panic!("second call should have failed"),
+            Err(e) => e,
+        };
         assert!(
-            err.to_string().contains("already"),
-            "{}", "expected 'already' in error, got: {err}"
+            err.to_string().contains("already called"),
+            "expected idempotency error, got: {}",
+            err
         );
+
+        Mux::shutdown();
+    }
+
+    #[test]
+    fn set_zellij_backend_registers_initial_zellij_pane() {
+        use zellij_server::embedded::Server;
+
+        let mux = std::sync::Arc::new(Mux::new(None));
+        Mux::set_mux(&mux);
+
+        let mut server = Server::new();
+        let handle = server.handle();
+        let outbound = server.take_outbound().unwrap();
+        let input = server.take_input_sender().unwrap();
+        mux.set_zellij_backend(
+            handle,
+            input,
+            outbound,
+            /* zellij_initial_pane_id */ 1,
+            /* client_id */ 1,
+            wezterm_term::TerminalSize {
+                rows: 24,
+                cols: 80,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // After backend setup, exactly one ZellijPane should be in the
+        // panes registry.
+        let panes = mux.panes.read();
+        let zellij_panes: Vec<_> = panes
+            .values()
+            .filter(|p| p.downcast_ref::<crate::zellij_pane::ZellijPane>().is_some())
+            .collect();
+        assert_eq!(zellij_panes.len(), 1, "expected exactly one ZellijPane");
+
+        drop(panes); // release read lock before shutdown
+        Mux::shutdown();
     }
 
     #[test]

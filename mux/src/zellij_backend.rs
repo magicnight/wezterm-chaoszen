@@ -11,10 +11,14 @@
 
 use std::thread::JoinHandle;
 
-use zellij_server::embedded::ServerHandle;
+use zellij_server::embedded::{EmbeddedInputSender, ServerHandle};
 
 pub struct ZellijBackend {
     pub handle: ServerHandle,
+    /// Embedded input sender — held so the underlying host_input_end fd
+    /// stays alive for the duration of the session. Dropping it would
+    /// close the socketpair and cause zellij-server's route_thread to EOF.
+    pub input_sender: EmbeddedInputSender,
     /// Outbound drain thread handle. Dropping `ZellijBackend` does NOT join
     /// the thread; the thread exits when the outbound channel disconnects
     /// (which happens when `start_session_blocking` returns or
