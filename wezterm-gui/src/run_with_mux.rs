@@ -60,6 +60,40 @@ impl SetupTask {
     }
 }
 
+/// Run the wezterm GUI event loop against a pre-prepared Mux.
+///
+/// **Slice 1b.4.a SHELL ONLY** — this function currently returns an
+/// error. The real body (frontend init + spawn + run_forever) is
+/// deferred to Slice 1b.4.b which will perform the deep restructure
+/// needed to move helpers (`set_window_class`, `frontend::try_new`,
+/// `Activity`, `terminate_with_error`, `maybe_show_configuration_error_window`)
+/// from `wezterm-gui/src/main.rs` (binary crate) into the
+/// `wezterm-gui` library crate so this lib-side function can call
+/// them.
+///
+/// Caller responsibilities (when 1b.4.b unblocks the body):
+///   - Mux already constructed and registered via `Mux::set_mux(&mux)`.
+///   - At least one Domain registered on the Mux.
+///   - Configuration system already initialized.
+///
+/// What `run_with_mux` will do (1b.4.b):
+///   1. Apply window class / position from `opts`.
+///   2. Initialize the GUI frontend (`frontend::try_new`).
+///   3. Spawn the caller's `setup` task via `promise::spawn::spawn`.
+///   4. Show any deferred configuration errors.
+///   5. Run the event loop until the window closes / app exits.
+pub fn run_with_mux(
+    _mux: std::sync::Arc<mux::Mux>,
+    _config: config::ConfigHandle,
+    _opts: RunWithMuxOpts,
+    _setup: SetupTask,
+) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "wezterm_gui::run_with_mux body deferred to Slice 1b.4.b; see \
+         docs/superpowers/specs/2026-05-10-slice-1b4a-wezterm-gui-modular-entry-design.md"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,5 +123,26 @@ mod tests {
         // Block on the future (no async runtime needed for this trivial body)
         smol::block_on(fut).expect("setup task must succeed");
         assert!(ran.load(Ordering::SeqCst), "setup task body did not run");
+    }
+
+    #[test]
+    fn run_with_mux_stub_bails() {
+        // 1b.4.a deliverable: the function exists and is callable.
+        // Its body is a stub bail!() until 1b.4.b's restructure lands.
+        // This test pins the contract: callers can construct the args
+        // and invoke the function; verification of the actual GUI
+        // behavior moves to 1b.4.b's integration smoke.
+        let mux = std::sync::Arc::new(mux::Mux::new(None));
+        let config = config::configuration();
+        let opts = RunWithMuxOpts::default();
+        let setup = SetupTask::new(|| async { Ok(()) });
+        let err = run_with_mux(mux, config, opts, setup)
+            .expect_err("stub must return Err");
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("1b.4.b"),
+            "error message must reference 1b.4.b, got: {}",
+            msg
+        );
     }
 }
