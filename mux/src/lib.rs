@@ -1552,4 +1552,48 @@ mod tests {
         assert_eq!(got.title, "hello");
         assert_eq!(got.seqno, 42);
     }
+
+    #[test]
+    fn drain_render_routes_to_zellij_pane() {
+        use crate::pane::Pane;
+        use crate::zellij_pane::ZellijPane;
+
+        let size = wezterm_term::TerminalSize {
+            rows: 5,
+            cols: 20,
+            ..Default::default()
+        };
+
+        // Construct mux and register it as the global singleton so that
+        // on_zellij_outbound's Mux::try_get() call resolves it.
+        let mux = Arc::new(Mux::new(None));
+        Mux::set_mux(&mux);
+
+        let pane: Arc<dyn Pane> = Arc::new(ZellijPane::new(1, 1, size));
+        mux.panes.write().insert(pane.pane_id(), Arc::clone(&pane));
+
+        // Invoke the drain handler — routes Render content to the registered pane.
+        let msg = zellij_utils::ipc::ServerToClientMsg::Render {
+            content: "hi".to_string(),
+        };
+        Mux::on_zellij_outbound(msg);
+
+        // Read back via downcast — confirms the pane received the bytes.
+        let zp = pane
+            .downcast_ref::<ZellijPane>()
+            .expect("downcast to ZellijPane");
+        let (_, lines) = zp.get_lines(0..5);
+        assert!(
+            !lines.is_empty(),
+            "expected at least one line from get_lines"
+        );
+        assert!(
+            lines[0].as_str().starts_with("hi"),
+            "expected 'hi' prefix in lines[0], got: {:?}",
+            lines[0].as_str()
+        );
+
+        // Clean up the global singleton to avoid leaking into other tests.
+        Mux::shutdown();
+    }
 }
