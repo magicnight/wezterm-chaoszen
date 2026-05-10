@@ -188,10 +188,10 @@ impl Pane for ZellijPane {
         self.terminal.lock().key_up(key, mods)
     }
 
-    fn mouse_event(&self, _event: MouseEvent) -> anyhow::Result<()> {
-        anyhow::bail!(
-            "ZellijPane::mouse_event not implemented in Slice 1b.3.a; see 1b.3.c"
-        )
+    fn mouse_event(&self, event: MouseEvent) -> anyhow::Result<()> {
+        // Terminal::mouse_event encodes per current mouse mode (X10,
+        // SGR, urxvt, etc.) and ships bytes through ZellijInputWriter.
+        self.terminal.lock().mouse_event(event)
     }
 
     fn palette(&self) -> ColorPalette {
@@ -343,6 +343,41 @@ mod tests {
                     "expected app-cursor encoding, got {:?}",
                     String::from_utf8_lossy(&bytes)
                 );
+            }
+            other => panic!("unexpected: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mouse_event_routes_via_action_write() {
+        use wezterm_term::{MouseButton, MouseEvent, MouseEventKind};
+        use zellij_utils::input::actions::Action;
+
+        let size = wezterm_term::TerminalSize { rows: 24, cols: 80, ..Default::default() };
+        let (pane, mut recv) = make_test_pane_with_input_recv(1, 1, size, 1);
+
+        // Put local Terminal into SGR mouse-tracking mode so it emits
+        // CSI < 0 ; 1 ; 1 M on press.
+        pane.advance_bytes(b"\x1b[?1000h\x1b[?1006h");
+
+        pane.mouse_event(MouseEvent {
+            kind: MouseEventKind::Press,
+            x: 0,
+            y: 0,
+            x_pixel_offset: 0,
+            y_pixel_offset: 0,
+            button: MouseButton::Left,
+            modifiers: wezterm_term::KeyModifiers::NONE,
+        }).unwrap();
+
+        let (msg, _ctx) = recv.recv_client_msg().unwrap();
+        match msg {
+            ClientToServerMsg::Action {
+                action: Action::WriteToPaneId { bytes, .. },
+                ..
+            } => {
+                let s = String::from_utf8_lossy(&bytes);
+                assert!(s.starts_with("\x1b[<0;1;1M"), "got {:?}", s);
             }
             other => panic!("unexpected: {:?}", other),
         }
