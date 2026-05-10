@@ -28,6 +28,10 @@ pub struct ClientId {
     pub pid: u32,
     pub epoch: u64,
     pub id: usize,
+    /// Pre-1b.x stub: the SSH_AUTH_SOCK env var observed at client
+    /// connect time. chaoszen does not propagate ssh-agent state;
+    /// always None.
+    pub ssh_auth_sock: Option<String>,
 }
 
 impl ClientId {
@@ -41,6 +45,7 @@ impl ClientId {
             pid: unsafe { libc::getpid() as u32 },
             epoch: *EPOCH,
             id,
+            ssh_auth_sock: None,
         }
     }
 }

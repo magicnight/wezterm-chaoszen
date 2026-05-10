@@ -314,6 +314,23 @@ impl From<SerdeUrl> for url::Url {
     }
 }
 
+impl From<&url::Url> for SerdeUrl {
+    /// Pre-1b.3.a IPC produced SerdeUrl from a `url::Url` reference.
+    /// chaoszen retains the conversion for codec callers; the value
+    /// is just the stringified URL.
+    fn from(u: &url::Url) -> Self {
+        SerdeUrl(u.to_string())
+    }
+}
+
+impl From<url::Url> for SerdeUrl {
+    /// Pre-1b.3.a IPC produced SerdeUrl from an owned `url::Url`.
+    /// chaoszen retains the conversion for codec callers.
+    fn from(u: url::Url) -> Self {
+        SerdeUrl(u.to_string())
+    }
+}
+
 /// Sealed marker trait for `Tab::new` arguments. Pre-1b.3.a callers in
 /// `wezterm-client` pass `&TerminalSize`; chaoszen callers in `mux::lib`
 /// pass `u32` (the zellij-side tab id). Both compile via this shim until
@@ -376,6 +393,39 @@ impl Tab {
     ) where
         F: FnMut(PaneEntry) -> Arc<dyn Pane>,
     {
+    }
+
+    /// Pre-1b.3.a method: serialized the pane tree for IPC. chaoszen
+    /// IPC doesn't carry pane trees; returns an empty PaneNode.
+    pub fn codec_pane_tree(&self) -> PaneNode {
+        PaneNode::default()
+    }
+
+    /// Pre-1b.3.a method: returned the currently-zoomed pane in this
+    /// tab. chaoszen has no zoom state; always None.
+    pub fn get_zoomed_pane(&self) -> Option<Arc<dyn Pane>> {
+        None
+    }
+
+    /// Pre-1b.3.a method: focus a pane in the given direction.
+    /// chaoszen delegates to zellij; no-op.
+    pub fn activate_pane_direction(
+        &self,
+        _direction: config::keyassignment::PaneDirection,
+    ) {
+    }
+
+    /// Pre-1b.3.a method: re-balanced split sizes from contained pane
+    /// dimensions. chaoszen delegates to zellij; no-op.
+    pub fn rebuild_splits_sizes_from_contained_panes(&self) {}
+
+    /// Pre-1b.3.a method: changed a pane's size by a delta.
+    /// chaoszen delegates to zellij; no-op.
+    pub fn adjust_pane_size(
+        &self,
+        _direction: config::keyassignment::PaneDirection,
+        _amount: usize,
+    ) {
     }
 }
 

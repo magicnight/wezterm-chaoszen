@@ -216,6 +216,25 @@ impl LocalDomain {
             state: parking_lot::RwLock::new(DomainState::Detached),
         })
     }
+
+    /// Pre-chaoszen: spawned a WSL-backed local domain. chaoszen does
+    /// not support WSL domains (Windows is shipped via the binary
+    /// directly, not via wezterm's WSL bridging).
+    pub fn new_wsl(_dom: config::WslDomain) -> anyhow::Result<Self> {
+        anyhow::bail!("WSL domains unsupported in chaoszen; see decision #6")
+    }
+
+    /// Pre-chaoszen: spawned an exec-domain (custom shell wrapper).
+    /// chaoszen retires this; use a regular shell or the AI bridge.
+    pub fn new_exec_domain(_dom: config::ExecDomain) -> anyhow::Result<Self> {
+        anyhow::bail!("exec domains unsupported in chaoszen; see decision #6")
+    }
+
+    /// Pre-chaoszen: spawned a serial-port-backed domain. chaoszen does
+    /// not support serial domains (out of scope per master plan).
+    pub fn new_serial_domain(_dom: config::SerialDomain) -> anyhow::Result<Self> {
+        anyhow::bail!("serial domains unsupported in chaoszen; see decision #6")
+    }
 }
 
 #[async_trait(?Send)]

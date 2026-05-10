@@ -40,6 +40,7 @@ pub mod localpane;
 pub mod pane;
 pub mod render_cache;
 pub mod renderable;
+pub mod ssh;
 pub mod tab;
 pub mod termwiztermtab;
 pub mod window;
