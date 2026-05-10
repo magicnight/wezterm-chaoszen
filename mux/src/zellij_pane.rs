@@ -196,4 +196,24 @@ mod tests {
             err
         );
     }
+
+    #[test]
+    fn advance_bytes_appears_in_get_lines() {
+        let size = wezterm_term::TerminalSize {
+            rows: 5,
+            cols: 20,
+            ..Default::default()
+        };
+        let pane = ZellijPane::new(1, 1, size);
+        pane.advance_bytes(b"hello\r\n");
+
+        let (_, lines) = pane.get_lines(0..5);
+        assert!(!lines.is_empty(), "expected at least one line");
+        let line_text = lines[0].as_str();
+        assert!(
+            line_text.starts_with("hello"),
+            "expected 'hello' prefix, got: {:?}",
+            line_text
+        );
+    }
 }
