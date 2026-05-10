@@ -254,9 +254,10 @@ mod tests {
 
     #[test]
     fn zellij_pane_send_paste_returns_unimplemented_in_1b3a() {
-        // 1b.3.c will replace this assertion when send_paste is implemented.
-        // Marked #[ignore] for B2; B5 reactivates with a positive assertion.
-        // Keeping the test name to track the deletion in git blame.
+        // Empty stub kept so B5 can replace this body in the same git-blame
+        // slot — the original 1b.3.a assertion (send_paste returns Err with
+        // "1b.3.c" in the message) no longer applies once B5 wires send_paste
+        // to Action::Paste.
     }
 
     #[test]
