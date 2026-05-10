@@ -186,8 +186,8 @@ impl Pane for ZellijPane {
         // Notify zellij-server so it recomputes pane geometry.
         let msg = zellij_utils::ipc::ClientToServerMsg::TerminalResize {
             new_size: zellij_utils::pane_size::Size {
-                rows: size.rows as usize,
-                cols: size.cols as usize,
+                rows: size.rows,
+                cols: size.cols,
             },
         };
         self.input_sender

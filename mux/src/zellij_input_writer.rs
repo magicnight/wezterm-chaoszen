@@ -42,7 +42,7 @@ impl io::Write for ZellijInputWriter {
         };
         self.sender
             .send(msg)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
         Ok(bytes.len())
     }
 
@@ -55,21 +55,17 @@ impl io::Write for ZellijInputWriter {
 mod tests {
     use super::*;
     use std::io::Write;
-    use zellij_server::embedded::Server;
     use zellij_utils::ipc::IpcReceiverWithContext;
 
     /// Verify ZellijInputWriter::write packages bytes into Action::WriteToPaneId
     /// and the matching server-end IpcReceiver deserializes the same.
     #[test]
     fn writer_emits_write_to_pane_id_action() {
-        // Build a Server (zero-side-effect: no thread spawned), borrow input
-        // sender, install matching server-side receiver via direct socketpair
-        // bypass — tests must NOT call start_session_blocking which would
-        // need full plugin assets. We replicate Server::take_input_sender
-        // round-trip pattern: use a fresh local SocketpairChannel.
+        // Build a fresh socketpair locally and wrap each end. Avoids
+        // Server::new() (which would allocate session-level state we
+        // don't need just to test the writer wiring).
         use zellij_server::embedded::SocketpairChannel;
         use zellij_utils::ipc::{ClientToServerMsg, IpcSenderWithContext};
-        let _ = Server::new(); // sanity: type still constructs
         let (host, server) = SocketpairChannel::new().unwrap();
         let host_stream = host.into_local_socket_stream().unwrap();
         let server_stream = server.into_local_socket_stream().unwrap();
