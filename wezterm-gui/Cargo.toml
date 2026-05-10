@@ -7,6 +7,14 @@ build = "build.rs"
 resolver = "2"
 publish = false
 
+[lib]
+name = "wezterm_gui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wezterm-gui"
+path = "src/main.rs"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
