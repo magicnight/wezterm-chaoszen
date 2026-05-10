@@ -179,10 +179,20 @@ impl Pane for ZellijPane {
         panic!("ZellijPane::writer not implemented in Slice 1b.3.a; see 1b.3.c")
     }
 
-    fn resize(&self, _size: TerminalSize) -> anyhow::Result<()> {
-        anyhow::bail!(
-            "ZellijPane::resize not implemented in Slice 1b.3.a; see 1b.3.c"
-        )
+    fn resize(&self, size: TerminalSize) -> anyhow::Result<()> {
+        // Mirror locally so wezterm-gui's dimension reads are correct
+        // between Render frames; next Render reflows to match.
+        self.terminal.lock().resize(size);
+        // Notify zellij-server so it recomputes pane geometry.
+        let msg = zellij_utils::ipc::ClientToServerMsg::TerminalResize {
+            new_size: zellij_utils::pane_size::Size {
+                rows: size.rows as usize,
+                cols: size.cols as usize,
+            },
+        };
+        self.input_sender
+            .send(msg)
+            .map_err(|e| anyhow::anyhow!("zellij resize failed: {}", e))
     }
 
     fn key_down(&self, key: KeyCode, mods: KeyModifiers) -> anyhow::Result<()> {
@@ -372,6 +382,32 @@ mod tests {
                 );
             }
             other => panic!("unexpected: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn resize_updates_local_dims_and_emits_terminal_resize() {
+        let size = wezterm_term::TerminalSize { rows: 24, cols: 80, ..Default::default() };
+        let (pane, mut recv) = make_test_pane_with_input_recv(1, 1, size, 1);
+
+        pane.resize(wezterm_term::TerminalSize {
+            rows: 30,
+            cols: 100,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let dims = pane.get_dimensions();
+        assert_eq!(dims.cols, 100);
+        assert_eq!(dims.viewport_rows, 30);
+
+        let (msg, _ctx) = recv.recv_client_msg().unwrap();
+        match msg {
+            ClientToServerMsg::TerminalResize { new_size } => {
+                assert_eq!(new_size.rows, 30);
+                assert_eq!(new_size.cols, 100);
+            }
+            other => panic!("expected TerminalResize, got: {:?}", other),
         }
     }
 
