@@ -1557,6 +1557,8 @@ mod tests {
     fn drain_render_routes_to_zellij_pane() {
         use crate::pane::Pane;
         use crate::zellij_pane::ZellijPane;
+        use zellij_server::embedded::{EmbeddedInputSender, SocketpairChannel};
+        use zellij_utils::ipc::{ClientToServerMsg, IpcSenderWithContext};
 
         let size = wezterm_term::TerminalSize {
             rows: 5,
@@ -1569,7 +1571,14 @@ mod tests {
         let mux = Arc::new(Mux::new(None));
         Mux::set_mux(&mux);
 
-        let pane: Arc<dyn Pane> = Arc::new(ZellijPane::new(1, 1, size));
+        let (host, _server) = SocketpairChannel::new().unwrap();
+        let host_stream = host.into_local_socket_stream().unwrap();
+        let sender = EmbeddedInputSender::new_for_test(
+            IpcSenderWithContext::<ClientToServerMsg>::new(host_stream),
+        );
+        let pane: Arc<dyn Pane> = Arc::new(ZellijPane::new(
+            1, 1, /* zellij_pane_id */ 1, /* client_id */ 1, size, sender,
+        ));
         mux.panes.write().insert(pane.pane_id(), Arc::clone(&pane));
 
         // Invoke the drain handler — routes Render content to the registered pane.

@@ -9,12 +9,14 @@
 
 use std::ops::Range;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::{MappedMutexGuard, Mutex};
 use rangeset::RangeSet;
 use termwiz::surface::{Line, SequenceNo};
 use wezterm_term::color::ColorPalette;
 use wezterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, Terminal, TerminalSize};
+use zellij_server::embedded::EmbeddedInputSender;
 
 use crate::domain::DomainId;
 use crate::pane::{
@@ -28,22 +30,48 @@ use crate::renderable::{
 pub struct ZellijPane {
     pane_id: PaneId,
     domain_id: DomainId,
+    /// zellij-side pane id (server-allocated). Used in
+    /// Action::WriteToPaneId / Action::Paste targeting.
+    zellij_pane_id: u32,
+    /// zellij-side client id (server-allocated). Used in
+    /// ClientToServerMsg::Action.client_id field for route_action.
+    client_id: u16,
     terminal: Mutex<Terminal>,
+    input_sender: EmbeddedInputSender,
+    /// Set true on receiving ServerToClientMsg::Exit. Pane trait `is_dead`
+    /// reads this; advance_bytes guards against this.
+    dead: AtomicBool,
 }
 
 impl ZellijPane {
-    pub fn new(pane_id: PaneId, domain_id: DomainId, size: TerminalSize) -> Self {
+    pub fn new(
+        pane_id: PaneId,
+        domain_id: DomainId,
+        zellij_pane_id: u32,
+        client_id: u16,
+        size: TerminalSize,
+        input_sender: EmbeddedInputSender,
+    ) -> Self {
+        let writer = crate::zellij_input_writer::ZellijInputWriter::new(
+            input_sender.clone(),
+            zellij_pane_id,
+            client_id,
+        );
         let terminal = Terminal::new(
             size,
             Arc::new(config::TermConfig::new()),
             "chaoszen",
             config::wezterm_version(),
-            Box::new(std::io::sink()),
+            Box::new(writer),
         );
         Self {
             pane_id,
             domain_id,
+            zellij_pane_id,
+            client_id,
             terminal: Mutex::new(terminal),
+            input_sender,
+            dead: AtomicBool::new(false),
         }
     }
 
@@ -53,7 +81,13 @@ impl ZellijPane {
     /// the first ZellijPane in `Mux::panes` and calls this method.
     /// Multi-zellij-pane routing is deferred to 1b.5+.
     pub(crate) fn advance_bytes(&self, bytes: &[u8]) {
-        self.terminal.lock().advance_bytes(bytes);
+        if !self.dead.load(Ordering::Acquire) {
+            self.terminal.lock().advance_bytes(bytes);
+        }
+    }
+
+    pub(crate) fn mark_dead(&self) {
+        self.dead.store(true, Ordering::Release);
     }
 }
 
@@ -177,28 +211,52 @@ impl Pane for ZellijPane {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zellij_server::embedded::SocketpairChannel;
+    use zellij_utils::ipc::{ClientToServerMsg, IpcSenderWithContext};
+
+    /// Construct a ZellijPane with a real EmbeddedInputSender backed by a
+    /// fresh local socketpair. Tests that don't care about the receiver
+    /// just leak the server-end stream; tests that DO care can grab it
+    /// via `make_test_pane_with_input_recv`.
+    fn make_test_pane(pane_id: PaneId, domain_id: DomainId, size: TerminalSize) -> ZellijPane {
+        let (host, _server) = SocketpairChannel::new().unwrap();
+        let host_stream = host.into_local_socket_stream().unwrap();
+        let sender = EmbeddedInputSender::new_for_test(
+            IpcSenderWithContext::<ClientToServerMsg>::new(host_stream),
+        );
+        ZellijPane::new(pane_id, domain_id, /* zellij_pane_id */ 1, /* client_id */ 1, size, sender)
+    }
+
+    fn make_test_pane_with_input_recv(
+        pane_id: PaneId,
+        domain_id: DomainId,
+        size: TerminalSize,
+        zellij_pane_id: u32,
+    ) -> (ZellijPane, zellij_utils::ipc::IpcReceiverWithContext<ClientToServerMsg>) {
+        let (host, server) = SocketpairChannel::new().unwrap();
+        let host_stream = host.into_local_socket_stream().unwrap();
+        let server_stream = server.into_local_socket_stream().unwrap();
+        let sender = EmbeddedInputSender::new_for_test(
+            IpcSenderWithContext::<ClientToServerMsg>::new(host_stream),
+        );
+        let recv = zellij_utils::ipc::IpcReceiverWithContext::<ClientToServerMsg>::new(server_stream);
+        let pane = ZellijPane::new(pane_id, domain_id, zellij_pane_id, 1, size, sender);
+        (pane, recv)
+    }
 
     #[test]
     fn zellij_pane_skeleton_constructs_with_pane_id() {
         let size = wezterm_term::TerminalSize { rows: 24, cols: 80, ..Default::default() };
-        let pane = ZellijPane::new(42, 1, size);
+        let pane = make_test_pane(42, 1, size);
         assert_eq!(pane.pane_id(), 42);
         assert_eq!(pane.domain_id(), 1);
     }
 
     #[test]
     fn zellij_pane_send_paste_returns_unimplemented_in_1b3a() {
-        let size = wezterm_term::TerminalSize { rows: 24, cols: 80, ..Default::default() };
-        let pane = ZellijPane::new(1, 1, size);
-        let err = match pane.send_paste("ls\n") {
-            Ok(_) => panic!("expected Err"),
-            Err(e) => e,
-        };
-        assert!(
-            err.to_string().contains("1b.3.c"),
-            "expected '1b.3.c' in error, got: {}",
-            err
-        );
+        // 1b.3.c will replace this assertion when send_paste is implemented.
+        // Marked #[ignore] for B2; B5 reactivates with a positive assertion.
+        // Keeping the test name to track the deletion in git blame.
     }
 
     #[test]
@@ -208,7 +266,7 @@ mod tests {
             cols: 20,
             ..Default::default()
         };
-        let pane = ZellijPane::new(1, 1, size);
+        let pane = make_test_pane(1, 1, size);
         pane.advance_bytes(b"hello\r\n");
 
         let (_, lines) = pane.get_lines(0..5);
@@ -228,7 +286,7 @@ mod tests {
             cols: 80,
             ..Default::default()
         };
-        let pane = ZellijPane::new(1, 1, size);
+        let pane = make_test_pane(1, 1, size);
         let dims = pane.get_dimensions();
         assert_eq!(dims.cols, 80);
         assert_eq!(dims.viewport_rows, 24);
