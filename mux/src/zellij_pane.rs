@@ -8,12 +8,13 @@
 //! ServerHandle) and wires spawn_pane.
 
 use std::ops::Range;
+use std::sync::Arc;
 
-use parking_lot::MappedMutexGuard;
+use parking_lot::{MappedMutexGuard, Mutex};
 use rangeset::RangeSet;
 use termwiz::surface::{Line, SequenceNo};
 use wezterm_term::color::ColorPalette;
-use wezterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, TerminalSize};
+use wezterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, Terminal, TerminalSize};
 
 use crate::domain::DomainId;
 use crate::pane::{
@@ -24,11 +25,23 @@ use crate::renderable::{RenderableDimensions, StableCursorPosition};
 pub struct ZellijPane {
     pane_id: PaneId,
     domain_id: DomainId,
+    terminal: Mutex<Terminal>,
 }
 
 impl ZellijPane {
-    pub fn new(pane_id: PaneId, domain_id: DomainId) -> Self {
-        Self { pane_id, domain_id }
+    pub fn new(pane_id: PaneId, domain_id: DomainId, size: TerminalSize) -> Self {
+        let terminal = Terminal::new(
+            size,
+            Arc::new(config::TermConfig::new()),
+            "chaoszen",
+            config::wezterm_version(),
+            Box::new(std::io::sink()),
+        );
+        Self {
+            pane_id,
+            domain_id,
+            terminal: Mutex::new(terminal),
+        }
     }
 }
 
@@ -151,14 +164,16 @@ mod tests {
 
     #[test]
     fn zellij_pane_skeleton_constructs_with_pane_id() {
-        let pane = ZellijPane::new(42, 1);
+        let size = wezterm_term::TerminalSize { rows: 24, cols: 80, ..Default::default() };
+        let pane = ZellijPane::new(42, 1, size);
         assert_eq!(pane.pane_id(), 42);
         assert_eq!(pane.domain_id(), 1);
     }
 
     #[test]
     fn zellij_pane_send_paste_returns_unimplemented_in_1b3a() {
-        let pane = ZellijPane::new(1, 1);
+        let size = wezterm_term::TerminalSize { rows: 24, cols: 80, ..Default::default() };
+        let pane = ZellijPane::new(1, 1, size);
         let err = match pane.send_paste("ls\n") {
             Ok(_) => panic!("expected Err"),
             Err(e) => e,
