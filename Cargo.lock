@@ -9532,7 +9532,7 @@ dependencies = [
  "vte 0.11.1",
  "wasmi",
  "wasmi_wasi",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
  "zellij-utils",
 ]
 
@@ -9583,7 +9583,7 @@ dependencies = [
  "url",
  "uuid",
  "winapi",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
