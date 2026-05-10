@@ -43,6 +43,15 @@ impl ZellijPane {
             terminal: Mutex::new(terminal),
         }
     }
+
+    /// Drain thread routes ANSI bytes from `ServerToClientMsg::Render { content }` here.
+    ///
+    /// Slice 1b.3.b: single-pane assumption — `Mux::on_zellij_outbound` finds
+    /// the first ZellijPane in `Mux::panes` and calls this method.
+    /// Multi-zellij-pane routing is deferred to 1b.5+.
+    pub(crate) fn advance_bytes(&self, bytes: &[u8]) {
+        self.terminal.lock().advance_bytes(bytes);
+    }
 }
 
 #[async_trait::async_trait(?Send)]
