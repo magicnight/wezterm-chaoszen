@@ -145,4 +145,18 @@ mod tests {
             msg
         );
     }
+
+    /// Compile-time verification that 1b.4.b.1's migration made the
+    /// helpers `run_with_mux`'s body needs reachable from the lib.
+    /// Pure type-level assertion — no GUI is started.
+    ///
+    /// 1b.4.b.2 will USE these symbols inside `run_with_mux`'s body
+    /// and this test becomes redundant; delete then.
+    #[test]
+    fn helpers_reachable_from_lib() {
+        let _set_class: fn(&str) = crate::termwindow::set_window_class;
+        let _set_pos: fn(config::GuiPosition) = crate::termwindow::set_window_position;
+        let _terminate: fn(anyhow::Error) -> ! = crate::terminate_with_error;
+        let _activity_new: fn() -> mux::activity::Activity = mux::activity::Activity::new;
+    }
 }
