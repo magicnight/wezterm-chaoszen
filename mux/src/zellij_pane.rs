@@ -20,7 +20,10 @@ use crate::domain::DomainId;
 use crate::pane::{
     CachePolicy, ForEachPaneLogicalLine, LogicalLine, Pane, PaneId, WithPaneLines,
 };
-use crate::renderable::{RenderableDimensions, StableCursorPosition};
+use crate::renderable::{
+    terminal_get_cursor_position, terminal_get_dimensions, terminal_get_lines,
+    RenderableDimensions, StableCursorPosition,
+};
 
 pub struct ZellijPane {
     pane_id: PaneId,
@@ -65,7 +68,7 @@ impl Pane for ZellijPane {
     }
 
     fn get_cursor_position(&self) -> StableCursorPosition {
-        StableCursorPosition::default() // 1b.3.b: read from cache
+        terminal_get_cursor_position(&mut self.terminal.lock())
     }
 
     fn get_current_seqno(&self) -> SequenceNo {
@@ -80,8 +83,8 @@ impl Pane for ZellijPane {
         RangeSet::default() // 1b.3.b: compare cache seqno
     }
 
-    fn get_lines(&self, _lines: Range<StableRowIndex>) -> (StableRowIndex, Vec<Line>) {
-        (0, vec![]) // 1b.3.b: read from cache.lines
+    fn get_lines(&self, lines: Range<StableRowIndex>) -> (StableRowIndex, Vec<Line>) {
+        terminal_get_lines(&mut self.terminal.lock(), lines)
     }
 
     fn with_lines_mut(&self, _lines: Range<StableRowIndex>, _with_lines: &mut dyn WithPaneLines) {
@@ -101,11 +104,11 @@ impl Pane for ZellijPane {
     }
 
     fn get_dimensions(&self) -> RenderableDimensions {
-        RenderableDimensions::default() // 1b.3.b
+        terminal_get_dimensions(&mut self.terminal.lock())
     }
 
     fn get_title(&self) -> String {
-        format!("zellij pane {}", self.pane_id) // 1b.3.b: read cache.title
+        self.terminal.lock().get_title().to_string()
     }
 
     fn is_dead(&self) -> bool {
