@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
+use downcast_rs::Downcast;
 use termwiz::escape::csi::{DecPrivateMode, DecPrivateModeCode, Device, Mode};
 use termwiz::escape::{Action, CSI};
 use thiserror::*;
@@ -484,15 +485,20 @@ impl Mux {
     fn on_zellij_outbound(msg: zellij_utils::ipc::ServerToClientMsg) {
         use zellij_utils::ipc::ServerToClientMsg;
         match msg {
-            ServerToClientMsg::Render { .. } => {
-                // Slice 1b.3.a: skeleton only — populate cache once Render
-                // payload structure is mapped. 1b.3.b will surface the data
-                // through Pane::get_lines.
-                log::trace!(target: "mux::zellij", "render arm reached");
+            ServerToClientMsg::Render { content } => {
                 if let Some(mux) = Mux::try_get() {
-                    let cache = mux.render_cache.write();
-                    // TODO(1b.3.b): parse payload → PaneRenderState fields
-                    let _ = cache;
+                    // Slice 1b.3.b single-pane routing: find first ZellijPane
+                    // in panes registry and forward the ANSI stream.
+                    // Multi-zellij-pane routing is 1b.5+.
+                    let panes = mux.panes.read();
+                    for pane in panes.values() {
+                        if let Some(zp) = pane
+                            .downcast_ref::<crate::zellij_pane::ZellijPane>()
+                        {
+                            zp.advance_bytes(content.as_bytes());
+                            break;
+                        }
+                    }
                 }
             }
             other => log::trace!(target: "mux::zellij",
