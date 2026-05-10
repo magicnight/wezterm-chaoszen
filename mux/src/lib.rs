@@ -44,6 +44,7 @@ pub mod tab;
 pub mod termwiztermtab;
 pub mod window;
 pub mod zellij_backend;
+pub mod zellij_input_writer;
 pub mod zellij_pane;
 
 use crate::activity::Activity;
