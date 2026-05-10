@@ -26,6 +26,40 @@ impl Default for RunWithMuxOpts {
     }
 }
 
+use std::future::Future;
+use std::pin::Pin;
+
+/// One-shot async setup task: a closure that runs once after frontend
+/// initialization to populate the Mux's windows/tabs from caller's
+/// vantage. wezterm-gui binary passes a closure that calls
+/// `async_run_terminal_gui`; chaoszen-app (1b.4.b) will pass a
+/// closure that attaches the existing zellij Tab to a Window.
+pub struct SetupTask {
+    inner: Box<
+        dyn FnOnce() -> Pin<Box<dyn Future<Output = anyhow::Result<()>>>> + Send,
+    >,
+}
+
+impl SetupTask {
+    pub fn new<F, Fut>(f: F) -> Self
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = anyhow::Result<()>> + 'static,
+    {
+        Self {
+            inner: Box::new(move || Box::pin(f())),
+        }
+    }
+
+    /// Internal: consume the task and produce the boxed future that
+    /// `run_with_mux` will spawn via `promise::spawn::spawn`.
+    pub(crate) fn into_future(
+        self,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>>>> {
+        (self.inner)()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -35,5 +69,25 @@ mod tests {
         let opts = RunWithMuxOpts::default();
         assert!(opts.class.is_none(), "class default must be None");
         assert!(opts.position.is_none(), "position default must be None");
+    }
+
+    #[test]
+    fn setup_task_roundtrip() {
+        // Construct, into_future, await — confirms the closure plumbing
+        // is wired correctly without depending on the GUI frontend.
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let ran = std::sync::Arc::new(AtomicBool::new(false));
+        let ran_clone = ran.clone();
+        let task = SetupTask::new(move || {
+            let ran = ran_clone;
+            async move {
+                ran.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+        });
+        let fut = task.into_future();
+        // Block on the future (no async runtime needed for this trivial body)
+        smol::block_on(fut).expect("setup task must succeed");
+        assert!(ran.load(Ordering::SeqCst), "setup task body did not run");
     }
 }
