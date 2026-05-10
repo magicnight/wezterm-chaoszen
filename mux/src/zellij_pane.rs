@@ -173,16 +173,19 @@ impl Pane for ZellijPane {
         )
     }
 
-    fn key_down(&self, _key: KeyCode, _mods: KeyModifiers) -> anyhow::Result<()> {
-        anyhow::bail!(
-            "ZellijPane::key_down not implemented in Slice 1b.3.a; see 1b.3.c"
-        )
+    fn key_down(&self, key: KeyCode, mods: KeyModifiers) -> anyhow::Result<()> {
+        // Terminal::key_down encodes the keystroke based on the pane's
+        // current mode (application cursor, modify-other-keys, kitty
+        // protocol, etc.) and writes the bytes to the inner writer —
+        // ZellijInputWriter, which packages them as Action::WriteToPaneId
+        // and ships to zellij-server.
+        self.terminal.lock().key_down(key, mods)
     }
 
-    fn key_up(&self, _key: KeyCode, _mods: KeyModifiers) -> anyhow::Result<()> {
-        anyhow::bail!(
-            "ZellijPane::key_up not implemented in Slice 1b.3.a; see 1b.3.c"
-        )
+    fn key_up(&self, key: KeyCode, mods: KeyModifiers) -> anyhow::Result<()> {
+        // Most key_up events are no-ops on legacy keyboard protocol;
+        // kitty protocol does emit release events. Same writer path.
+        self.terminal.lock().key_up(key, mods)
     }
 
     fn mouse_event(&self, _event: MouseEvent) -> anyhow::Result<()> {
@@ -291,5 +294,57 @@ mod tests {
         let dims = pane.get_dimensions();
         assert_eq!(dims.cols, 80);
         assert_eq!(dims.viewport_rows, 24);
+    }
+
+    #[test]
+    fn key_down_char_sends_byte_via_action_write() {
+        use wezterm_term::{KeyCode, KeyModifiers};
+        use zellij_utils::data::PaneId as ZellijPaneId;
+        use zellij_utils::input::actions::Action;
+
+        let size = wezterm_term::TerminalSize { rows: 24, cols: 80, ..Default::default() };
+        let (pane, mut recv) = make_test_pane_with_input_recv(1, 1, size, 7);
+
+        pane.key_down(KeyCode::Char('a'), KeyModifiers::NONE).unwrap();
+
+        let (msg, _ctx) = recv.recv_client_msg().expect("recv must succeed");
+        match msg {
+            ClientToServerMsg::Action {
+                action: Action::WriteToPaneId { bytes, pane_id },
+                ..
+            } => {
+                assert_eq!(bytes, b"a");
+                assert!(matches!(pane_id, ZellijPaneId::Terminal(7)));
+            }
+            other => panic!("unexpected msg: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn key_down_up_arrow_uses_app_cursor_when_set() {
+        use wezterm_term::{KeyCode, KeyModifiers};
+        use zellij_utils::input::actions::Action;
+
+        let size = wezterm_term::TerminalSize { rows: 24, cols: 80, ..Default::default() };
+        let (pane, mut recv) = make_test_pane_with_input_recv(1, 1, size, 1);
+
+        // Put local Terminal into application cursor mode (DECCKM h)
+        pane.advance_bytes(b"\x1b[?1h");
+        pane.key_down(KeyCode::UpArrow, KeyModifiers::NONE).unwrap();
+
+        let (msg, _ctx) = recv.recv_client_msg().unwrap();
+        match msg {
+            ClientToServerMsg::Action {
+                action: Action::WriteToPaneId { bytes, .. },
+                ..
+            } => {
+                assert_eq!(
+                    bytes, b"\x1bOA",
+                    "expected app-cursor encoding, got {:?}",
+                    String::from_utf8_lossy(&bytes)
+                );
+            }
+            other => panic!("unexpected: {:?}", other),
+        }
     }
 }
