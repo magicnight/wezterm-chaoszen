@@ -87,16 +87,20 @@ impl Pane for ZellijPane {
         terminal_get_lines(&mut self.terminal.lock(), lines)
     }
 
-    fn with_lines_mut(&self, _lines: Range<StableRowIndex>, _with_lines: &mut dyn WithPaneLines) {
-        // 1b.3.b: delegate to get_lines via impl_with_lines_via_get_lines
+    fn with_lines_mut(&self, lines: Range<StableRowIndex>, with_lines: &mut dyn WithPaneLines) {
+        crate::renderable::terminal_with_lines_mut(&mut self.terminal.lock(), lines, with_lines);
     }
 
     fn for_each_logical_line_in_stable_range_mut(
         &self,
-        _lines: Range<StableRowIndex>,
-        _for_line: &mut dyn ForEachPaneLogicalLine,
+        lines: Range<StableRowIndex>,
+        for_line: &mut dyn ForEachPaneLogicalLine,
     ) {
-        // 1b.3.b: iterate logical lines from cache
+        crate::renderable::terminal_for_each_logical_line_in_stable_range_mut(
+            &mut self.terminal.lock(),
+            lines,
+            for_line,
+        );
     }
 
     fn get_logical_lines(&self, _lines: Range<StableRowIndex>) -> Vec<LogicalLine> {
