@@ -216,4 +216,17 @@ mod tests {
             line_text
         );
     }
+
+    #[test]
+    fn get_dimensions_matches_initial_size() {
+        let size = wezterm_term::TerminalSize {
+            rows: 24,
+            cols: 80,
+            ..Default::default()
+        };
+        let pane = ZellijPane::new(1, 1, size);
+        let dims = pane.get_dimensions();
+        assert_eq!(dims.cols, 80);
+        assert_eq!(dims.viewport_rows, 24);
+    }
 }
