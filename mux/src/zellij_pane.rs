@@ -150,7 +150,7 @@ impl Pane for ZellijPane {
     }
 
     fn is_dead(&self) -> bool {
-        false // 1b.3.b: read cache.is_dead
+        self.dead.load(Ordering::Acquire)
     }
 
     fn send_paste(&self, text: &str) -> anyhow::Result<()> {
@@ -409,6 +409,31 @@ mod tests {
             }
             other => panic!("expected TerminalResize, got: {:?}", other),
         }
+    }
+
+    #[test]
+    fn is_dead_reflects_mark_dead() {
+        let size = wezterm_term::TerminalSize { rows: 24, cols: 80, ..Default::default() };
+        let pane = make_test_pane(1, 1, size);
+        assert!(!pane.is_dead());
+        pane.mark_dead();
+        assert!(pane.is_dead());
+    }
+
+    #[test]
+    fn advance_bytes_no_op_after_mark_dead() {
+        let size = wezterm_term::TerminalSize { rows: 5, cols: 20, ..Default::default() };
+        let pane = make_test_pane(1, 1, size);
+        pane.advance_bytes(b"hello\r\n");
+        let (_, lines_before) = pane.get_lines(0..5);
+        let text_before = lines_before[0].as_str().to_string();
+
+        pane.mark_dead();
+        pane.advance_bytes(b"WORLD\r\n");
+
+        let (_, lines_after) = pane.get_lines(0..5);
+        assert_eq!(lines_after[0].as_str(), text_before,
+            "advance_bytes after mark_dead should not mutate Terminal");
     }
 
     #[test]
