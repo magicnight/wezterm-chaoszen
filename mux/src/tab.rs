@@ -93,8 +93,17 @@ impl Tab {
             .cloned()
     }
 
-    pub fn count_panes(&self) -> usize {
-        self.panes.read().len()
+    /// Pre-1b.3.a method: returned the number of panes in this tab.
+    /// chaoszen tracks panes locally; returns the cached count when
+    /// non-empty, otherwise None to signal "not yet known" to callers
+    /// like the launcher overlay.
+    pub fn count_panes(&self) -> Option<usize> {
+        let n = self.panes.read().len();
+        if n == 0 {
+            None
+        } else {
+            Some(n)
+        }
     }
 
     pub fn set_title(&self, title: &str) {
@@ -249,12 +258,15 @@ impl std::fmt::Debug for PositionedPane {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PositionedSplit {
     pub direction: SplitDirection,
     pub left: usize,
     pub top: usize,
     pub size: usize,
+    /// Pre-1b.3.a field: cached split index in the pane tree.
+    /// chaoszen has no pane tree; always 0.
+    pub index: usize,
 }
 
 // =============================================================================
@@ -289,6 +301,16 @@ impl PaneNode {
     /// always None.
     pub fn window_and_tab_ids(&self) -> Option<(crate::window::WindowId, TabId)> {
         None
+    }
+
+    /// Pre-1b.3.a method: convert flat IPC representation into a real
+    /// pane tree (`bintree::Tree<PaneEntry>`). chaoszen does not own
+    /// pane trees; returns an empty tree. Callers iterate it via
+    /// `cursor.preorder_next()` which immediately returns Err on
+    /// `Tree::Empty`, breaking the traversal loop without yielding any
+    /// leaves.
+    pub fn into_tree(self) -> bintree::Tree<PaneEntry, ()> {
+        bintree::Tree::Empty
     }
 }
 
@@ -427,6 +449,57 @@ impl Tab {
         _amount: usize,
     ) {
     }
+
+    /// Pre-1b.3.a method: resize the tab's pane tree to a new size.
+    /// chaoszen delegates pane geometry to zellij; no-op.
+    pub fn resize(&self, _size: wezterm_term::TerminalSize) {}
+
+    /// Pre-1b.3.a method: terminate a pane by id within this tab.
+    /// chaoszen delegates pane lifecycle to zellij; no-op (returns false).
+    pub fn kill_pane(&self, _pane_id: PaneId) -> bool {
+        false
+    }
+
+    /// Pre-1b.3.a method: adjust a split boundary by N cells.
+    /// chaoszen delegates to zellij; no-op.
+    pub fn resize_split_by(&self, _split_index: usize, _delta: isize) {}
+
+    /// Pre-1b.3.a method: returned the per-pane split borders for
+    /// rendering. chaoszen has no pane tree; returns empty.
+    pub fn iter_splits(&self) -> Vec<PositionedSplit> {
+        vec![]
+    }
+
+    /// Pre-1b.3.a method: change the active pane index. chaoszen tracks
+    /// the active pane via set_active_pane; this older index-based API
+    /// is a no-op.
+    pub fn set_active_idx(&self, _idx: usize) {}
+
+    /// Pre-1b.3.a method: swap two panes by index. chaoszen delegates
+    /// to zellij; no-op (returns None).
+    pub fn swap_active_with_index(
+        &self,
+        _idx: usize,
+        _keep_focus: bool,
+    ) -> Option<()> {
+        None
+    }
+
+    /// Pre-1b.3.a method: query whether a pane id exists in this tab.
+    /// chaoszen tracks panes via the panes Vec; check it.
+    pub fn contains_pane(&self, pane_id: PaneId) -> bool {
+        self.panes.read().iter().any(|p| p.pane_id() == pane_id)
+    }
+
+    /// Pre-1b.3.a method: toggled the zoom state of the active pane.
+    /// chaoszen has no zoom; no-op (returns false).
+    pub fn toggle_zoom(&self) -> bool {
+        false
+    }
+
+    /// Pre-1b.3.a method: rotated panes clockwise. chaoszen delegates
+    /// to zellij; no-op.
+    pub fn rotate_clockwise(&self) {}
 }
 
 /// Pre-1b.3.a per-pane snapshot used in IPC sync. chaoszen IPC doesn't
