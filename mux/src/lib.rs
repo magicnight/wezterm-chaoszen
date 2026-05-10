@@ -445,16 +445,6 @@ impl Mux {
         }
     }
 
-    /// Install the zellij-server::embedded backend. Spawns the outbound
-    /// drain thread that reads `ServerToClientMsg`s and feeds them into
-    /// Mux state (in 1b.2 shallow: just logs; 1b.3 will sync tabs/panes).
-    ///
-    /// Idempotency: this method may be called at most once per Mux
-    /// instance. Second call returns `Err`.
-    ///
-    /// Ordering: chaoszen-app is expected to call this after the embedded
-    /// zellij-server has been started on a worker thread, but before any
-    /// `Domain::spawn_pane` call from wezterm-gui's main loop.
     /// Bind a freshly-created embedded zellij server to this Mux.
     ///
     /// Performs three actions atomically (under the backend slot's write
@@ -463,8 +453,9 @@ impl Mux {
     ///    `zellij_initial_pane_id`, typically 1) and registers it in the
     ///    panes registry — so the drain thread (started in step 3) can
     ///    immediately route Render content to it.
-    /// 2. Constructs a `Tab` holding that pane and adds it to the windows
-    ///    registry.
+    /// 2. Constructs a `Tab` holding that pane and returns it for chaoszen-app
+    ///    (1b.4) to attach to a window via `Mux::add_tab_no_panes` /
+    ///    window registration.
     /// 3. Spawns the outbound drain thread and stores the
     ///    `ZellijBackend` snapshot.
     ///
