@@ -153,10 +153,22 @@ impl Pane for ZellijPane {
         false // 1b.3.b: read cache.is_dead
     }
 
-    fn send_paste(&self, _text: &str) -> anyhow::Result<()> {
-        anyhow::bail!(
-            "ZellijPane::send_paste not implemented in Slice 1b.3.a; see 1b.3.c"
-        )
+    fn send_paste(&self, text: &str) -> anyhow::Result<()> {
+        // Bypass Terminal::send_paste — zellij does the bracketed paste
+        // wrapping itself when route_action handles Action::Paste.
+        let action = zellij_utils::input::actions::Action::Paste {
+            chars: text.to_string(),
+            pane_id: Some(zellij_utils::data::PaneId::Terminal(self.zellij_pane_id)),
+        };
+        let msg = zellij_utils::ipc::ClientToServerMsg::Action {
+            action,
+            terminal_id: Some(self.zellij_pane_id),
+            client_id: Some(self.client_id),
+            is_cli_client: false,
+        };
+        self.input_sender
+            .send(msg)
+            .map_err(|e| anyhow::anyhow!("zellij send_paste failed: {}", e))
     }
 
     fn reader(&self) -> anyhow::Result<Option<Box<dyn std::io::Read + Send>>> {
@@ -256,11 +268,26 @@ mod tests {
     }
 
     #[test]
-    fn zellij_pane_send_paste_returns_unimplemented_in_1b3a() {
-        // Empty stub kept so B5 can replace this body in the same git-blame
-        // slot — the original 1b.3.a assertion (send_paste returns Err with
-        // "1b.3.c" in the message) no longer applies once B5 wires send_paste
-        // to Action::Paste.
+    fn send_paste_emits_paste_action_with_pane_id() {
+        use zellij_utils::data::PaneId as ZellijPaneId;
+        use zellij_utils::input::actions::Action;
+
+        let size = wezterm_term::TerminalSize { rows: 24, cols: 80, ..Default::default() };
+        let (pane, mut recv) = make_test_pane_with_input_recv(1, 1, size, 5);
+
+        pane.send_paste("hi\n").unwrap();
+
+        let (msg, _ctx) = recv.recv_client_msg().unwrap();
+        match msg {
+            ClientToServerMsg::Action {
+                action: Action::Paste { chars, pane_id },
+                ..
+            } => {
+                assert_eq!(chars, "hi\n");
+                assert_eq!(pane_id, Some(ZellijPaneId::Terminal(5)));
+            }
+            other => panic!("expected Paste, got: {:?}", other),
+        }
     }
 
     #[test]
