@@ -28,6 +28,10 @@ opt-level = 3
 # debug = 2
 
 [profile.dev]
+# chaoszen 1b4b1-upstream-sync: line-tables-only debuginfo cuts dev-build
+# time and shrinks target/debug substantially (this workspace's debug
+# artifacts were ~20G). Adopted from zellij upstream #5321.
+debug = "line-tables-only"
 # https://jakedeichert.com/blog/reducing-rust-incremental-compilation-times-on-macos-by-70-percent/
 # Disabled because it breaks builds on Windows
 #split-debuginfo = "unpacked"
