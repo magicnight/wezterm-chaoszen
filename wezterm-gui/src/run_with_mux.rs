@@ -62,36 +62,44 @@ impl SetupTask {
 
 /// Run the wezterm GUI event loop against a pre-prepared Mux.
 ///
-/// **Slice 1b.4.a SHELL ONLY** — this function currently returns an
-/// error. The real body (frontend init + spawn + run_forever) is
-/// deferred to Slice 1b.4.b which will perform the deep restructure
-/// needed to move helpers (`set_window_class`, `frontend::try_new`,
-/// `Activity`, `terminate_with_error`, `maybe_show_configuration_error_window`)
-/// from `wezterm-gui/src/main.rs` (binary crate) into the
-/// `wezterm-gui` library crate so this lib-side function can call
-/// them.
+/// Applies window class / position from `opts`, initializes the GUI
+/// frontend (`frontend::try_new`), spawns the caller's `setup` task
+/// via `promise::spawn::spawn`, shows any deferred configuration
+/// errors, then drives the event loop until the window closes / app
+/// exits. This mirrors the tail of the original `run_terminal_gui`
+/// (see `wezterm-gui/src/lib.rs`), now shared between the wezterm-gui
+/// binary (LocalDomain path) and chaoszen-app (zellij-backend path).
 ///
-/// Caller responsibilities (when 1b.4.b unblocks the body):
+/// Caller responsibilities:
 ///   - Mux already constructed and registered via `Mux::set_mux(&mux)`.
 ///   - At least one Domain registered on the Mux.
 ///   - Configuration system already initialized.
-///
-/// What `run_with_mux` will do (1b.4.b):
-///   1. Apply window class / position from `opts`.
-///   2. Initialize the GUI frontend (`frontend::try_new`).
-///   3. Spawn the caller's `setup` task via `promise::spawn::spawn`.
-///   4. Show any deferred configuration errors.
-///   5. Run the event loop until the window closes / app exits.
 pub fn run_with_mux(
     _mux: std::sync::Arc<mux::Mux>,
     _config: config::ConfigHandle,
-    _opts: RunWithMuxOpts,
-    _setup: SetupTask,
+    opts: RunWithMuxOpts,
+    setup: SetupTask,
 ) -> anyhow::Result<()> {
-    anyhow::bail!(
-        "wezterm_gui::run_with_mux body deferred to Slice 1b.4.b; see \
-         docs/superpowers/specs/2026-05-10-slice-1b4a-wezterm-gui-modular-entry-design.md"
-    )
+    if let Some(class) = opts.class.as_deref() {
+        crate::termwindow::set_window_class(class);
+    }
+    if let Some(pos) = opts.position {
+        crate::termwindow::set_window_position(pos);
+    }
+
+    let gui = crate::frontend::try_new()?;
+    let activity = mux::activity::Activity::new();
+
+    promise::spawn::spawn(async move {
+        if let Err(err) = setup.into_future().await {
+            crate::terminate_with_error(err);
+        }
+        drop(activity);
+    })
+    .detach();
+
+    crate::maybe_show_configuration_error_window();
+    gui.run_forever()
 }
 
 #[cfg(test)]
@@ -123,40 +131,5 @@ mod tests {
         // Block on the future (no async runtime needed for this trivial body)
         smol::block_on(fut).expect("setup task must succeed");
         assert!(ran.load(Ordering::SeqCst), "setup task body did not run");
-    }
-
-    #[test]
-    fn run_with_mux_stub_bails() {
-        // 1b.4.a deliverable: the function exists and is callable.
-        // Its body is a stub bail!() until 1b.4.b's restructure lands.
-        // This test pins the contract: callers can construct the args
-        // and invoke the function; verification of the actual GUI
-        // behavior moves to 1b.4.b's integration smoke.
-        let mux = std::sync::Arc::new(mux::Mux::new(None));
-        let config = config::configuration();
-        let opts = RunWithMuxOpts::default();
-        let setup = SetupTask::new(|| async { Ok(()) });
-        let err = run_with_mux(mux, config, opts, setup)
-            .expect_err("stub must return Err");
-        let msg = format!("{}", err);
-        assert!(
-            msg.contains("1b.4.b"),
-            "error message must reference 1b.4.b, got: {}",
-            msg
-        );
-    }
-
-    /// Compile-time verification that 1b.4.b.1's migration made the
-    /// helpers `run_with_mux`'s body needs reachable from the lib.
-    /// Pure type-level assertion — no GUI is started.
-    ///
-    /// 1b.4.b.2 will USE these symbols inside `run_with_mux`'s body
-    /// and this test becomes redundant; delete then.
-    #[test]
-    fn helpers_reachable_from_lib() {
-        let _set_class: fn(&str) = crate::termwindow::set_window_class;
-        let _set_pos: fn(config::GuiPosition) = crate::termwindow::set_window_position;
-        let _terminate: fn(anyhow::Error) -> ! = crate::terminate_with_error;
-        let _activity_new: fn() -> mux::activity::Activity = mux::activity::Activity::new;
     }
 }
