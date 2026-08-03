@@ -1175,6 +1175,33 @@ pub(crate) fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -
     Ok(())
 }
 
+/// GUI 进程 bootstrap：env_bootstrap + lua context setup funcs + stats +
+/// config 加载。
+///
+/// 从 `run_cli` 抽出，好让 embedder（chaoszen-app）不经过 CLI parser 也能做
+/// 同样的 GUI-env 初始化 —— 它调用的那几个 register 函数是 `pub(crate)`，
+/// 从 crate 外不可达。
+///
+/// 返回 `UmaskSaver` 守卫：调用方必须让它活到进程结束（drop 会还原 umask）。
+pub fn gui_bootstrap(
+    config_file: Option<&std::ffi::OsString>,
+    config_override: &[(String, String)],
+    skip_config: bool,
+) -> anyhow::Result<umask::UmaskSaver> {
+    env_bootstrap::bootstrap();
+    // window_funcs 不由 env_bootstrap 装配：它是 GUI 环境专属，而
+    // env_bootstrap 也服务于 headless mux server。
+    config::lua::add_context_setup_func(window_funcs::register);
+    config::lua::add_context_setup_func(crate::scripting::register);
+    config::lua::add_context_setup_func(crate::stats::register);
+
+    stats::Stats::init()?;
+    let saver = umask::UmaskSaver::new();
+
+    config::common_init(config_file, config_override, skip_config)?;
+    Ok(saver)
+}
+
 pub fn run_cli() -> anyhow::Result<()> {
     // Inform the system of our AppUserModelID.
     // Without this, our toast notifications won't be correctly
@@ -1209,18 +1236,7 @@ pub fn run_cli() -> anyhow::Result<()> {
         }
     };
 
-    env_bootstrap::bootstrap();
-    // window_funcs is not set up by env_bootstrap as window_funcs is
-    // GUI environment specific and env_bootstrap is used to setup the
-    // headless mux server.
-    config::lua::add_context_setup_func(window_funcs::register);
-    config::lua::add_context_setup_func(crate::scripting::register);
-    config::lua::add_context_setup_func(crate::stats::register);
-
-    stats::Stats::init()?;
-    let _saver = umask::UmaskSaver::new();
-
-    config::common_init(
+    let _saver = gui_bootstrap(
         opts.config_file.as_ref(),
         &opts.config_override,
         opts.skip_config,
