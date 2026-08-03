@@ -23,9 +23,10 @@ use crate::pane::{
     CachePolicy, ForEachPaneLogicalLine, LogicalLine, Pane, PaneId, WithPaneLines,
 };
 use crate::renderable::{
-    terminal_get_cursor_position, terminal_get_dimensions, terminal_get_lines,
-    RenderableDimensions, StableCursorPosition,
+    terminal_get_cursor_position, terminal_get_dimensions, terminal_get_dirty_lines,
+    terminal_get_lines, RenderableDimensions, StableCursorPosition,
 };
+use crate::{Mux, MuxNotification};
 
 pub struct ZellijPane {
     pane_id: PaneId,
@@ -83,6 +84,13 @@ impl ZellijPane {
     pub(crate) fn advance_bytes(&self, bytes: &[u8]) {
         if !self.dead.load(Ordering::Acquire) {
             self.terminal.lock().advance_bytes(bytes);
+            // Terminal content changed — tell the GUI to repaint. This is
+            // called from the `mux-outbound-drain` thread (see
+            // `Mux::on_zellij_outbound` in lib.rs), never the main thread,
+            // so it MUST be `notify_from_any_thread` (which hops to the
+            // main thread when needed) rather than `notify` (which assumes
+            // it is already running on the main thread).
+            Mux::notify_from_any_thread(MuxNotification::PaneOutput(self.pane_id));
         }
     }
 
@@ -106,15 +114,15 @@ impl Pane for ZellijPane {
     }
 
     fn get_current_seqno(&self) -> SequenceNo {
-        0 // 1b.3.b: read from cache
+        self.terminal.lock().current_seqno()
     }
 
     fn get_changed_since(
         &self,
-        _lines: Range<StableRowIndex>,
-        _seqno: SequenceNo,
+        lines: Range<StableRowIndex>,
+        seqno: SequenceNo,
     ) -> RangeSet<StableRowIndex> {
-        RangeSet::default() // 1b.3.b: compare cache seqno
+        terminal_get_dirty_lines(&mut self.terminal.lock(), lines, seqno)
     }
 
     fn get_lines(&self, lines: Range<StableRowIndex>) -> (StableRowIndex, Vec<Line>) {
@@ -302,6 +310,12 @@ mod tests {
 
     #[test]
     fn advance_bytes_appears_in_get_lines() {
+        // advance_bytes() now calls Mux::notify_from_any_thread(), which
+        // needs a Mux singleton registered on this thread (see
+        // advance_bytes_bumps_seqno for why).
+        let mux = std::sync::Arc::new(crate::Mux::new(None));
+        crate::Mux::set_mux(&mux);
+
         let size = wezterm_term::TerminalSize {
             rows: 5,
             cols: 20,
@@ -318,6 +332,52 @@ mod tests {
             "expected 'hello' prefix, got: {:?}",
             line_text
         );
+
+        crate::Mux::shutdown();
+    }
+
+    #[test]
+    fn advance_bytes_bumps_seqno() {
+        // advance_bytes must notify the GUI that the pane changed, and the
+        // wezterm-gui renderer decides whether a repaint is needed by
+        // comparing `get_current_seqno()` against the value it saw last
+        // frame. If this stayed a hardcoded 0 (as in the pre-1b.4.b.2
+        // stub), the renderer would conclude "nothing changed" forever and
+        // the GUI window would stay blank even though bytes are flowing
+        // into the Terminal. This test pins down that the seqno is a real,
+        // monotonically increasing counter, not another constant.
+        //
+        // notify_from_any_thread() (invoked internally by advance_bytes)
+        // reaches into the Mux singleton. We register one on this thread
+        // so it resolves `is_main_thread()` == true and takes the direct
+        // `mux.notify(..)` path, instead of hopping through
+        // `promise::spawn::spawn_into_main_thread`, which panics with "no
+        // scheduler has been configured" when no GUI event loop has set
+        // one up (as in this test binary). See
+        // `tests::drain_render_routes_to_zellij_pane` in mux/src/lib.rs
+        // for the same Mux::new/set_mux/shutdown pattern.
+        let mux = std::sync::Arc::new(crate::Mux::new(None));
+        crate::Mux::set_mux(&mux);
+
+        let size = wezterm_term::TerminalSize {
+            rows: 5,
+            cols: 20,
+            ..Default::default()
+        };
+        let pane = make_test_pane(1, 1, size);
+
+        let before = pane.get_current_seqno();
+        pane.advance_bytes(b"hello\r\n");
+        let after = pane.get_current_seqno();
+
+        assert!(
+            after > before,
+            "expected get_current_seqno() to increase after advance_bytes: before={:?}, after={:?}",
+            before,
+            after
+        );
+
+        crate::Mux::shutdown();
     }
 
     #[test]
@@ -362,6 +422,12 @@ mod tests {
         use wezterm_term::{KeyCode, KeyModifiers};
         use zellij_utils::input::actions::Action;
 
+        // advance_bytes() now calls Mux::notify_from_any_thread(), which
+        // needs a Mux singleton registered on this thread (see
+        // advance_bytes_bumps_seqno for why).
+        let mux = std::sync::Arc::new(crate::Mux::new(None));
+        crate::Mux::set_mux(&mux);
+
         let size = wezterm_term::TerminalSize { rows: 24, cols: 80, ..Default::default() };
         let (pane, mut recv) = make_test_pane_with_input_recv(1, 1, size, 1);
 
@@ -383,6 +449,8 @@ mod tests {
             }
             other => panic!("unexpected: {:?}", other),
         }
+
+        crate::Mux::shutdown();
     }
 
     #[test]
@@ -422,6 +490,12 @@ mod tests {
 
     #[test]
     fn advance_bytes_no_op_after_mark_dead() {
+        // advance_bytes() now calls Mux::notify_from_any_thread(), which
+        // needs a Mux singleton registered on this thread (see
+        // advance_bytes_bumps_seqno for why).
+        let mux = std::sync::Arc::new(crate::Mux::new(None));
+        crate::Mux::set_mux(&mux);
+
         let size = wezterm_term::TerminalSize { rows: 5, cols: 20, ..Default::default() };
         let pane = make_test_pane(1, 1, size);
         pane.advance_bytes(b"hello\r\n");
@@ -434,12 +508,20 @@ mod tests {
         let (_, lines_after) = pane.get_lines(0..5);
         assert_eq!(lines_after[0].as_str(), text_before,
             "advance_bytes after mark_dead should not mutate Terminal");
+
+        crate::Mux::shutdown();
     }
 
     #[test]
     fn mouse_event_routes_via_action_write() {
         use wezterm_term::{MouseButton, MouseEvent, MouseEventKind};
         use zellij_utils::input::actions::Action;
+
+        // advance_bytes() now calls Mux::notify_from_any_thread(), which
+        // needs a Mux singleton registered on this thread (see
+        // advance_bytes_bumps_seqno for why).
+        let mux = std::sync::Arc::new(crate::Mux::new(None));
+        crate::Mux::set_mux(&mux);
 
         let size = wezterm_term::TerminalSize { rows: 24, cols: 80, ..Default::default() };
         let (pane, mut recv) = make_test_pane_with_input_recv(1, 1, size, 1);
@@ -469,5 +551,7 @@ mod tests {
             }
             other => panic!("unexpected: {:?}", other),
         }
+
+        crate::Mux::shutdown();
     }
 }
