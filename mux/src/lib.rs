@@ -528,14 +528,31 @@ impl Mux {
         use zellij_utils::ipc::ServerToClientMsg;
         match msg {
             ServerToClientMsg::Render { content } => {
-                if let Some(mux) = Mux::try_get() {
-                    let panes = mux.panes.read();
-                    for pane in panes.values() {
-                        if let Some(zp) = pane
-                            .downcast_ref::<crate::zellij_pane::ZellijPane>()
-                        {
-                            zp.advance_bytes(content.as_bytes());
-                            break;
+                // Render 是唯一承载 pane 内容的消息，出问题时最需要可观测性 ——
+                // 此前它是所有 outbound 变体里唯一不打日志的，一旦内容没上屏
+                // 就无从判断是「没收到」还是「收到了没路由到 pane」。
+                match Mux::try_get() {
+                    None => log::warn!(target: "mux::zellij",
+                        "Render({} bytes) dropped: Mux singleton not set", content.len()),
+                    Some(mux) => {
+                        let panes = mux.panes.read();
+                        let mut routed = false;
+                        for pane in panes.values() {
+                            if let Some(zp) = pane
+                                .downcast_ref::<crate::zellij_pane::ZellijPane>()
+                            {
+                                zp.advance_bytes(content.as_bytes());
+                                routed = true;
+                                break;
+                            }
+                        }
+                        if routed {
+                            log::trace!(target: "mux::zellij",
+                                "Render: {} bytes → ZellijPane", content.len());
+                        } else {
+                            log::warn!(target: "mux::zellij",
+                                "Render({} bytes) dropped: no ZellijPane among {} panes",
+                                content.len(), panes.len());
                         }
                     }
                 }

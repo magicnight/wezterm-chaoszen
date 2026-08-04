@@ -30,6 +30,9 @@ impl ZellijInputWriter {
 
 impl io::Write for ZellijInputWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        // 刻意不在此处记录字节内容：这条路径承载用户的每一次按键，
+        // 打日志等同于键盘记录器（会捕获密码等敏感输入）。排查输入问题时
+        // 临时加，用完即删。
         let action = Action::WriteToPaneId {
             bytes: bytes.to_vec(),
             pane_id: ZellijPaneId::Terminal(self.zellij_pane_id),
