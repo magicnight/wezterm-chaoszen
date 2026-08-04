@@ -129,10 +129,67 @@ impl Tab {
         true
     }
 
+    /// 构造当前 tab 内所有 pane 的定位信息,供渲染器按序绘制。
+    ///
+    /// 调用链:`wezterm-gui` 的 `TermWindow::get_panes_to_render`
+    /// -> `get_pos_panes_for_tab` -> `Tab::iter_panes` -> 这里。此前
+    /// 这里恒返回空 Vec,是 first-runnable 卡住的根因——渲染器拿到空
+    /// 列表后一个 pane 都不画,窗口只剩背景色。
+    ///
+    /// 当前阶段的几何简化假设(chaoszen 尚未实现分屏,只支持单 pane
+    /// 铺满整个 tab):
+    /// - `left`/`top` 恒为 0。
+    /// - `width`/`height` 直接取该 pane 自己的字符尺寸,即
+    ///   `pane.get_dimensions()`(`RenderableDimensions`)里的
+    ///   `cols`/`viewport_rows`。
+    /// - 这里是对 `self.panes` 的完整遍历,并不是"只处理第一个 pane
+    ///   然后硬编码返回长度为 1 的 Vec"。将来接入真实分屏布局时,只需
+    ///   要把下面 left/top/width/height 的取值换成从真实布局树按
+    ///   pane_id 查出来的几何,循环结构本身不需要变。
+    /// - 真实的分屏几何要等 zellij 的 split-layout 信息被接入
+    ///   `RenderCache` 之后才能在这里取到:目前 `PaneRenderState`
+    ///   (见 `render_cache.rs`)只缓存了每个 pane 自己的
+    ///   `RenderableDimensions`(它自己的 cols/rows/像素),并没有它在
+    ///   分屏树里的 left/top/width/height offset。等这部分信息补齐后,
+    ///   应在这里按 pane_id 查询 RenderCache 得到真实几何,替换掉当前
+    ///   left=0/top=0/单 pane 铺满的简化值。
+    ///
+    /// `pixel_width`/`pixel_height` 取值依据:`RenderableDimensions`
+    /// 本身就带有这两个字段(来自该 pane 底层 `Terminal` 的
+    /// `TerminalSize`),直接使用,无需另外从别处推导。经确认,
+    /// wezterm-gui 实际的绘制路径(`render/pane.rs` 的
+    /// `paint_pane_box_model`/`build_pane` 等)不读取
+    /// `PositionedPane::pixel_width`/`pixel_height`,而是用
+    /// `TermWindow` 自己的 `self.dimensions`(整个窗口的像素尺寸)和
+    /// `render_metrics.cell_size` 现算像素;这两个字段目前唯一的消费者
+    /// 是 `pos_pane_to_pane_info` -> `PaneInformation`(暴露给 Lua API
+    /// 的自省信息,例如 status bar 脚本读取 pane 的像素尺寸)。所以就算
+    /// 这里的值不够精确也不会影响实际渲染,但填入 pane 自己已知的真实
+    /// 值仍然好过硬编码 0。
     pub fn iter_panes_ignoring_zoom(&self) -> Vec<PositionedPane> {
-        // 1b.3.a: empty. 1b.3.c: build PositionedPane list from panes
-        // and the geometry recorded in RenderCache.
-        vec![]
+        // 加锁顺序与 assign_pane 保持一致(先 panes 后 active_pane_id),
+        // 避免与其反向加锁顺序形成 AB-BA 死锁。
+        let panes = self.panes.read();
+        let active_id = *self.active_pane_id.read();
+        panes
+            .iter()
+            .enumerate()
+            .map(|(index, pane)| {
+                let dims = pane.get_dimensions();
+                PositionedPane {
+                    index,
+                    pane: Arc::clone(pane),
+                    left: 0,
+                    top: 0,
+                    width: dims.cols,
+                    height: dims.viewport_rows,
+                    pixel_width: dims.pixel_width,
+                    pixel_height: dims.pixel_height,
+                    is_active: active_id == Some(pane.pane_id()),
+                    is_zoomed: false,
+                }
+            })
+            .collect()
     }
 
     pub fn compute_split_size(
@@ -519,10 +576,151 @@ pub struct PaneEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pane::{CachePolicy, ForEachPaneLogicalLine, LogicalLine, WithPaneLines};
+    use crate::renderable::{RenderableDimensions, StableCursorPosition};
+    use parking_lot::MappedMutexGuard;
+    use rangeset::RangeSet;
+    use std::ops::Range;
+    use termwiz::surface::{Line, SequenceNo};
+    use wezterm_term::color::ColorPalette;
+    use wezterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex};
 
     #[test]
     fn tab_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<Tab>();
+    }
+
+    /// 极简的测试用 `Pane` 实现:只有 `pane_id`/`get_dimensions` 返回
+    /// 受控的值,其余方法在 `iter_panes` 测试里不会被调用到,用
+    /// `unimplemented!()` 占位——与 `crate::pane` 测试模块里的
+    /// `FakePane` 是同一种写法。
+    struct FakePane {
+        pane_id: PaneId,
+        dims: RenderableDimensions,
+    }
+
+    impl Pane for FakePane {
+        fn pane_id(&self) -> PaneId {
+            self.pane_id
+        }
+        fn get_cursor_position(&self) -> StableCursorPosition {
+            unimplemented!()
+        }
+        fn get_current_seqno(&self) -> SequenceNo {
+            unimplemented!()
+        }
+        fn get_changed_since(
+            &self,
+            _lines: Range<StableRowIndex>,
+            _seqno: SequenceNo,
+        ) -> RangeSet<StableRowIndex> {
+            unimplemented!()
+        }
+        fn get_lines(&self, _lines: Range<StableRowIndex>) -> (StableRowIndex, Vec<Line>) {
+            unimplemented!()
+        }
+        fn with_lines_mut(
+            &self,
+            _lines: Range<StableRowIndex>,
+            _with_lines: &mut dyn WithPaneLines,
+        ) {
+            unimplemented!()
+        }
+        fn for_each_logical_line_in_stable_range_mut(
+            &self,
+            _lines: Range<StableRowIndex>,
+            _for_line: &mut dyn ForEachPaneLogicalLine,
+        ) {
+            unimplemented!()
+        }
+        fn get_logical_lines(&self, _lines: Range<StableRowIndex>) -> Vec<LogicalLine> {
+            unimplemented!()
+        }
+        fn get_dimensions(&self) -> RenderableDimensions {
+            self.dims
+        }
+        fn get_title(&self) -> String {
+            unimplemented!()
+        }
+        fn send_paste(&self, _text: &str) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        fn reader(&self) -> anyhow::Result<Option<Box<dyn std::io::Read + Send>>> {
+            Ok(None)
+        }
+        fn writer(&self) -> MappedMutexGuard<'_, dyn std::io::Write> {
+            unimplemented!()
+        }
+        fn resize(&self, _size: wezterm_term::TerminalSize) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        fn key_down(&self, _key: KeyCode, _mods: KeyModifiers) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        fn key_up(&self, _key: KeyCode, _mods: KeyModifiers) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        fn mouse_event(&self, _event: MouseEvent) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        fn is_dead(&self) -> bool {
+            false
+        }
+        fn palette(&self) -> ColorPalette {
+            unimplemented!()
+        }
+        fn domain_id(&self) -> DomainId {
+            0
+        }
+        fn is_mouse_grabbed(&self) -> bool {
+            false
+        }
+        fn is_alt_screen_active(&self) -> bool {
+            false
+        }
+        fn get_current_working_dir(&self, _policy: CachePolicy) -> Option<url::Url> {
+            None
+        }
+    }
+
+    fn fake_dims(cols: usize, viewport_rows: usize) -> RenderableDimensions {
+        RenderableDimensions {
+            cols,
+            viewport_rows,
+            pixel_width: cols * 8,
+            pixel_height: viewport_rows * 16,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn iter_panes_returns_positioned_pane_matching_assigned_pane() {
+        let tab = Tab::new_orphan();
+        let dims = fake_dims(80, 24);
+        let pane: Arc<dyn Pane> = Arc::new(FakePane { pane_id: 7, dims });
+        tab.assign_pane(&pane);
+
+        let panes = tab.iter_panes();
+        assert_eq!(panes.len(), 1, "expected exactly one positioned pane");
+
+        let pos = &panes[0];
+        assert_eq!(
+            pos.pane.pane_id(),
+            7,
+            "pane_id should match the assigned pane"
+        );
+        assert!(pos.is_active, "first (only) assigned pane should be active");
+        assert_eq!(
+            pos.width, dims.cols,
+            "width should come from pane dimensions"
+        );
+        assert_eq!(
+            pos.height, dims.viewport_rows,
+            "height should come from pane dimensions"
+        );
+        assert_eq!(pos.left, 0);
+        assert_eq!(pos.top, 0);
+        assert!(!pos.is_zoomed);
     }
 }
